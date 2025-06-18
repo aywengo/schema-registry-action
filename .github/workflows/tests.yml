@@ -6,13 +6,13 @@ on:
     paths: 
       - 'scripts/**'
       - 'tests/**'
-      - '.github/workflows/ci-tests.yml'
+      - '.github/workflows/tests.yml'
   pull_request:
     branches: [ main ]
     paths:
       - 'scripts/**'
       - 'tests/**'
-      - '.github/workflows/ci-tests.yml'
+      - '.github/workflows/tests.yml'
 
 jobs:
   test:
@@ -68,7 +68,7 @@ jobs:
     
     - name: Upload test results
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: test-results-${{ matrix.test-type }}
         path: |
@@ -159,8 +159,20 @@ jobs:
     - name: Run security scan
       run: |
         # Check for common security issues in shell scripts
-        grep -r "eval\|exec\|system\|\`" scripts/ || true
-        grep -r "rm -rf \$\|rm -rf /\|>/dev/null 2>&1" scripts/ || true
+        echo "Checking for dangerous shell commands..."
+        # Look for eval, exec, system but exclude backticks in strings/comments
+        if grep -r "eval\|exec\|system" scripts/ | grep -v "^#\|^\s*#" | grep -v '"\|'"'"''; then
+          echo "Found potentially dangerous commands"
+          exit 1
+        fi
+        
+        # Check for dangerous rm commands
+        if grep -r "rm -rf \$\|rm -rf /" scripts/ | grep -v ">/dev/null 2>&1"; then
+          echo "Found dangerous rm commands"
+          exit 1
+        fi
+        
+        echo "Security scan completed - no issues found"
     
     - name: Check for hardcoded secrets
       run: |
