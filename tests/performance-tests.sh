@@ -380,7 +380,7 @@ test_schema_export_performance() {
       "Export all subjects (all versions)"
     
     measure_execution_time \
-      "ksr-cli list subjects --registry-url $MOCK_REGISTRY_URL" \
+      "ksr-cli get subjects --registry-url $MOCK_REGISTRY_URL" \
       "List all subjects"
   else
     log_warning "Skipping registry-dependent export tests"

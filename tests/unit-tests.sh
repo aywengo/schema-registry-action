@@ -230,7 +230,7 @@ test_action_validate() {
   # Test basic validation by simulating ksr-cli usage
   if install_ksr_cli; then
     test_case "Action validates AVRO schemas successfully" \
-      "cd '$TEMP_DIR' && ksr-cli validate --help" \
+      "cd '$TEMP_DIR' && ksr-cli check --help" \
       0
     
     # Test with invalid schema - simulate what would happen
@@ -278,7 +278,7 @@ test_ksr_cli_integration() {
   # Test schema validation with ksr-cli
   if start_mock_registry; then
     test_case "ksr-cli can connect to registry" \
-      "ksr-cli list subjects --registry-url $MOCK_REGISTRY_URL" \
+      "ksr-cli get subjects --registry-url $MOCK_REGISTRY_URL" \
       0
     
     test_case "ksr-cli can check schema compatibility" \
