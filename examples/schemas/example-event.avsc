@@ -1,0 +1,33 @@
+{
+  "namespace": "com.example.demo",
+  "type": "record",
+  "name": "ExampleEvent",
+  "doc": "Example schema for demonstration purposes",
+  "fields": [
+    {
+      "name": "id",
+      "type": "string",
+      "doc": "Unique identifier"
+    },
+    {
+      "name": "timestamp",
+      "type": "long",
+      "doc": "Event timestamp in milliseconds"
+    },
+    {
+      "name": "event_type",
+      "type": {
+        "type": "enum",
+        "name": "EventType",
+        "symbols": ["CREATED", "UPDATED", "DELETED"]
+      },
+      "doc": "Type of event"
+    },
+    {
+      "name": "data",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Optional event data"
+    }
+  ]
+}
