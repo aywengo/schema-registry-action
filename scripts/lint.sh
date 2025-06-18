@@ -177,7 +177,8 @@ lint_protobuf_schema() {
   if ! grep -q "^syntax" "$schema_file"; then
     issues+=("ERROR: Missing syntax declaration")
   else
-    local syntax=$(grep "^syntax" "$schema_file" | sed 's/.*"\(.*\)".*/\1/')
+    local syntax
+    syntax=$(grep "^syntax" "$schema_file" | sed 's/.*"\(.*\)".*/\1/')
     if [ "$syntax" != "${DEFAULT_PROTOBUF_RULES[syntax_version]}" ]; then
       issues+=("WARN: Expected syntax '${DEFAULT_PROTOBUF_RULES[syntax_version]}', found '$syntax'")
     fi
@@ -192,7 +193,8 @@ lint_protobuf_schema() {
   
   # Check message naming convention
   if [ "${DEFAULT_PROTOBUF_RULES[message_naming]}" == "PascalCase" ]; then
-    local messages=$(grep -E "^message\s+" "$schema_file" | awk '{print $2}')
+    local messages
+    messages=$(grep -E "^message\s+" "$schema_file" | awk '{print $2}')
     while IFS= read -r message; do
       if [ ! -z "$message" ] && ! [[ "$message" =~ ^[A-Z][a-zA-Z0-9]*$ ]]; then
         issues+=("WARN: Message '$message' does not follow PascalCase convention")
@@ -337,22 +339,19 @@ while IFS= read -r -d '' schema_file; do
   
   # Run appropriate linter
   lint_output=""
-  lint_result=0
   
   case "$detected_type" in
     avro)
-      lint_output=$(lint_avro_schema "$schema_file" 2>&1) || lint_result=$?
+      lint_output=$(lint_avro_schema "$schema_file" 2>&1) || true
       ;;
     protobuf)
-      lint_output=$(lint_protobuf_schema "$schema_file" 2>&1) || lint_result=$?
+      lint_output=$(lint_protobuf_schema "$schema_file" 2>&1) || true
       ;;
     json)
-      lint_output=$(lint_json_schema "$schema_file" 2>&1) || lint_result=$?
+      lint_output=$(lint_json_schema "$schema_file" 2>&1) || true
       ;;
     *)
       lint_output="ERROR: Unknown schema type"
-      # lint_result variable is used in the success/failure logic below
-      lint_result=1
       ;;
   esac
   

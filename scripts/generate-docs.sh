@@ -144,13 +144,18 @@ generate_avro_docs() {
         docs+="<table>\n"
         docs+="<tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>\n"
         
-        local fields=$(echo "$schema" | jq -c '.fields[]?' 2>/dev/null)
+        local fields
+        fields=$(echo "$schema" | jq -c '.fields[]?' 2>/dev/null)
         while IFS= read -r field; do
           if [ ! -z "$field" ]; then
-            local field_name=$(echo "$field" | jq -r '.name')
-            local field_type=$(echo "$field" | jq -r '.type | if type == "array" then tostring else . end' | sed 's/</\&lt;/g' | sed 's/>/\&gt;/g')
-            local field_doc=$(echo "$field" | jq -r '.doc // "No description"')
-            local field_default=$(echo "$field" | jq -r 'if has("default") then "No" else "Yes" end')
+            local field_name
+            local field_type
+            local field_doc
+            local field_default
+            field_name=$(echo "$field" | jq -r '.name')
+            field_type=$(echo "$field" | jq -r '.type | if type == "array" then tostring else . end' | sed 's/</\&lt;/g' | sed 's/>/\&gt;/g')
+            field_doc=$(echo "$field" | jq -r '.doc // "No description"')
+            field_default=$(echo "$field" | jq -r 'if has("default") then "No" else "Yes" end')
             
             docs+="<tr><td>$field_name</td><td><code>$field_type</code></td><td>$field_default</td><td>$field_doc</td></tr>\n"
           fi
@@ -333,9 +338,12 @@ generate_index() {
         IFS='|' read -ra group_schemas <<< "${groups[$group]}"
         for schema_info in "${group_schemas[@]}"; do
           if [ ! -z "$schema_info" ]; then
-            local name=$(echo "$schema_info" | jq -r '.name // "Unknown"' 2>/dev/null || echo "Unknown")
-            local file=$(echo "$schema_info" | jq -r '.file // ""' 2>/dev/null || echo "")
-            local doc_file=$(basename "$file" .avsc).md
+            local name
+            local file
+            local doc_file
+            name=$(echo "$schema_info" | jq -r '.name // "Unknown"' 2>/dev/null || echo "Unknown")
+            file=$(echo "$schema_info" | jq -r '.file // ""' 2>/dev/null || echo "")
+            doc_file=$(basename "$file" .avsc).md
             index+="- [$name](./$doc_file)\n"
           fi
         done
@@ -359,9 +367,12 @@ generate_index() {
       index+="<ul>\n"
       
       for schema in "${schemas[@]}"; do
-        local name=$(echo "$schema" | jq -r '.name // "Unknown"' 2>/dev/null || echo "Unknown")
-        local file=$(echo "$schema" | jq -r '.file // ""' 2>/dev/null || echo "")
-        local doc_file=$(basename "$file" .avsc).html
+        local name
+        local file
+        local doc_file
+        name=$(echo "$schema" | jq -r '.name // "Unknown"' 2>/dev/null || echo "Unknown")
+        file=$(echo "$schema" | jq -r '.file // ""' 2>/dev/null || echo "")
+        doc_file=$(basename "$file" .avsc).html
         index+="<li><a href=\"./$doc_file\">$name</a></li>\n"
       done
       

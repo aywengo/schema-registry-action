@@ -116,13 +116,16 @@ register_schema() {
 # Function to extract subject from schema file
 extract_subject() {
   local schema_file="$1"
-  local filename=$(basename "$schema_file")
+  local filename
+  filename=$(basename "$schema_file")
   local subject="${filename%.*}"
   
   # Try to extract from schema namespace and name
   if [[ "$schema_file" == *.avsc ]]; then
-    local namespace=$(jq -r '.namespace // empty' "$schema_file" 2>/dev/null)
-    local name=$(jq -r '.name // empty' "$schema_file" 2>/dev/null)
+    local namespace
+    local name
+    namespace=$(jq -r '.namespace // empty' "$schema_file" 2>/dev/null)
+    name=$(jq -r '.name // empty' "$schema_file" 2>/dev/null)
     
     if [ ! -z "$namespace" ] && [ ! -z "$name" ]; then
       subject="${namespace}.${name}"
