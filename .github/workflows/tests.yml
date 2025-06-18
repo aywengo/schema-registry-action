@@ -1,0 +1,216 @@
+name: Schema Registry Scripts Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths: 
+      - 'scripts/**'
+      - 'tests/**'
+      - '.github/workflows/ci-tests.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'scripts/**'
+      - 'tests/**'
+      - '.github/workflows/ci-tests.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        test-type: [unit, integration, performance]
+        
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y jq bc curl
+        pip install jsonschema
+        
+        # Install optional tools for performance testing
+        if [[ "${{ matrix.test-type }}" == "performance" ]]; then
+          # Install memusg if available
+          wget -O /tmp/memusg https://raw.githubusercontent.com/jhclark/memusg/master/memusg || true
+          chmod +x /tmp/memusg 2>/dev/null || true
+          sudo mv /tmp/memusg /usr/local/bin/ 2>/dev/null || true
+        fi
+    
+    - name: Make test scripts executable
+      run: |
+        chmod +x tests/*.sh
+        chmod +x scripts/*.sh
+    
+    - name: Run unit tests
+      if: matrix.test-type == 'unit'
+      run: |
+        cd tests
+        ./unit-tests.sh --verbose
+    
+    - name: Run integration tests
+      if: matrix.test-type == 'integration'
+      run: |
+        cd tests
+        ./test-runner.sh --verbose
+    
+    - name: Run performance tests
+      if: matrix.test-type == 'performance'
+      run: |
+        cd tests
+        ./performance-tests.sh --verbose --iterations=3
+    
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-results-${{ matrix.test-type }}
+        path: |
+          /tmp/test_*.log
+          /tmp/*_output.log
+        retention-days: 30
+  
+  # Test scripts individually
+  script-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        script: [validate, lint, generate-docs, check-compatibility, deploy, export, compare]
+        
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y jq bc curl
+    
+    - name: Make scripts executable
+      run: |
+        chmod +x tests/*.sh
+        chmod +x scripts/*.sh
+    
+    - name: Test specific script
+      run: |
+        cd tests
+        ./test-runner.sh --verbose --script=${{ matrix.script }}
+  
+  # Test on different operating systems
+  cross-platform:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y jq bc curl
+    
+    - name: Install dependencies (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        brew install jq bc curl
+    
+    - name: Make scripts executable
+      run: |
+        chmod +x tests/*.sh
+        chmod +x scripts/*.sh
+    
+    - name: Run basic tests
+      run: |
+        cd tests
+        ./test-runner.sh --script=validate
+  
+  # Security and linting
+  security:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Run ShellCheck
+      uses: ludeeus/action-shellcheck@master
+      with:
+        check_together: 'yes'
+        scandir: './scripts'
+        format: gcc
+        severity: warning
+    
+    - name: Run security scan
+      run: |
+        # Check for common security issues in shell scripts
+        grep -r "eval\|exec\|system\|\`" scripts/ || true
+        grep -r "rm -rf \$\|rm -rf /\|>/dev/null 2>&1" scripts/ || true
+    
+    - name: Check for hardcoded secrets
+      run: |
+        # Basic check for potential secrets
+        grep -ri "password\|secret\|key\|token" scripts/ || true
+        
+  # Documentation tests
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Check script documentation
+      run: |
+        # Verify each script has proper header documentation
+        for script in scripts/*.sh; do
+          if ! head -10 "$script" | grep -q "Purpose:"; then
+            echo "Missing purpose documentation in $script"
+            exit 1
+          fi
+        done
+    
+    - name: Validate examples
+      run: |
+        # Check if example schemas are valid
+        if [ -d "examples/schemas" ]; then
+          for schema in examples/schemas/*.avsc; do
+            if ! jq . "$schema" >/dev/null 2>&1; then
+              echo "Invalid JSON in example schema: $schema"
+              exit 1
+            fi
+          done
+        fi
+
+# Notifications and reporting
+  report:
+    needs: [test, script-tests, cross-platform, security, docs]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: Test Results Summary
+      run: |
+        echo "## Test Results Summary" >> $GITHUB_STEP_SUMMARY
+        echo "| Test Type | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Unit Tests | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Integration Tests | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Performance Tests | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Script Tests | ${{ needs.script-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Cross Platform | ${{ needs.cross-platform.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Security | ${{ needs.security.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Documentation | ${{ needs.docs.result }} |" >> $GITHUB_STEP_SUMMARY 

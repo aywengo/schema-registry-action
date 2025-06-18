@@ -318,4 +318,4 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ---
 
-Made with ❤️ by the Schema Registry Action team
+Made with ❤️ for Kafka Community

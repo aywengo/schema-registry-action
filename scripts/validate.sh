@@ -38,13 +38,69 @@ echo '{"operation": "validate", "status": "running", "schemas": []}' > "$RESULT_
 # Validation functions
 validate_avro() {
   local file="$1"
-  # Use avro-tools or similar to validate
+  
+  # Use avro-tools if available
   if command -v avro-tools &> /dev/null; then
     avro-tools compile schema "$file" /tmp/avro-test 2>&1
-  else
-    # Basic JSON validation for AVRO
-    python3 -m json.tool "$file" > /dev/null 2>&1
+    return $?
   fi
+  
+  # Basic JSON validation first
+  if ! python3 -m json.tool "$file" > /dev/null 2>&1; then
+    return 1
+  fi
+  
+  # Basic AVRO schema validation
+  python3 -c "
+import json
+import sys
+
+try:
+    with open('$file', 'r') as f:
+        schema = json.load(f)
+    
+    # Check required fields for AVRO schema
+    if 'type' not in schema:
+        print('Missing required field: type', file=sys.stderr)
+        sys.exit(1)
+    
+    # If it's a record, check for required fields
+    if schema.get('type') == 'record':
+        if 'name' not in schema:
+            print('Record schema missing required field: name', file=sys.stderr)
+            sys.exit(1)
+        if 'fields' not in schema:
+            print('Record schema missing required field: fields', file=sys.stderr)
+            sys.exit(1)
+        
+        # Validate fields
+        for field in schema.get('fields', []):
+            if not isinstance(field, dict):
+                print('Field must be an object', file=sys.stderr)
+                sys.exit(1)
+            if 'name' not in field:
+                print('Field missing required property: name', file=sys.stderr)
+                sys.exit(1)
+            if 'type' not in field:
+                print('Field missing required property: type', file=sys.stderr)
+                sys.exit(1)
+    
+    sys.exit(0)
+    
+except json.JSONDecodeError as e:
+    print(f'Invalid JSON: {e}', file=sys.stderr)
+    sys.exit(1)
+except Exception as e:
+    print(f'Validation error: {e}', file=sys.stderr)
+    sys.exit(1)
+" >/dev/null
+  
+  # The return code will be the exit code of the python command
+  if [ $? -ne 0 ]; then
+    return 1
+  fi
+  
+  return 0
 }
 
 validate_protobuf() {
@@ -63,6 +119,37 @@ validate_json() {
   # Validate JSON Schema
   python3 -m json.tool "$file" > /dev/null 2>&1
 }
+
+# Check if schemas path exists
+if [ ! -d "$SCHEMAS_PATH" ]; then
+  echo "Error: Schemas path does not exist: $SCHEMAS_PATH"
+  
+  # Update result file with error
+  jq --arg status "failure" \
+     --arg result "Schemas path does not exist: $SCHEMAS_PATH" \
+     --arg total "0" \
+     --arg valid "0" \
+     --arg invalid "0" \
+     '.status = $status | 
+      .validation_result = $result |
+      .summary = {
+        "total": ($total | tonumber),
+        "valid": ($valid | tonumber),
+        "invalid": ($invalid | tonumber)
+      }' \
+     "$RESULT_FILE" > tmp.json && mv tmp.json "$RESULT_FILE"
+  
+  case $OUTPUT_FORMAT in
+    json)
+      cat "$RESULT_FILE"
+      ;;
+    *)
+      echo "Validation failed: Schemas path does not exist"
+      ;;
+  esac
+  
+  exit 1
+fi
 
 # Find and validate schemas
 TOTAL_SCHEMAS=0
@@ -119,10 +206,15 @@ while IFS= read -r -d '' schema_file; do
       '.schemas += [{"file": $file, "status": $status, "error": $error}]' \
       "$RESULT_FILE" > tmp.json && mv tmp.json "$RESULT_FILE"
   fi
-done < <(find "$SCHEMAS_PATH" -name "$PATTERN" -type f -print0)
+done < <(find "$SCHEMAS_PATH" -name "$PATTERN" -type f -print0 2>/dev/null)
 
+# Check if no schemas were found
+if [ $TOTAL_SCHEMAS -eq 0 ]; then
+  STATUS="failure"
+  VALIDATION_RESULT="No schemas found in $SCHEMAS_PATH matching pattern $PATTERN"
+  touch operation-failed
 # Update final result
-if [ $INVALID_SCHEMAS -eq 0 ]; then
+elif [ $INVALID_SCHEMAS -eq 0 ]; then
   STATUS="success"
   VALIDATION_RESULT="All schemas are valid"
 else
@@ -180,4 +272,8 @@ case $OUTPUT_FORMAT in
 esac
 
 # Exit with appropriate code
-[ $INVALID_SCHEMAS -eq 0 ] && exit 0 || exit 1
+if [ "$STATUS" = "success" ]; then
+  exit 0
+else
+  exit 1
+fi
