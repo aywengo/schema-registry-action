@@ -351,6 +351,7 @@ while IFS= read -r -d '' schema_file; do
       ;;
     *)
       lint_output="ERROR: Unknown schema type"
+      # lint_result variable is used in the success/failure logic below
       lint_result=1
       ;;
   esac
