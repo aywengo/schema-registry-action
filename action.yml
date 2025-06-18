@@ -1,0 +1,309 @@
+name: 'Schema Registry CI/CD'
+description: 'Automate Schema Registry operations in your CI/CD pipeline'
+author: 'Roman Melnyk'
+branding:
+  icon: 'database'
+  color: 'blue'
+
+inputs:
+  operation:
+    description: 'Operation to perform (validate, check-compatibility, deploy, compare, export, lint, generate-docs)'
+    required: true
+    
+  registry-url:
+    description: 'Schema Registry URL'
+    required: false
+    
+  registry-type:
+    description: 'Type of registry (confluent, aws-glue, apicurio)'
+    required: false
+    default: 'confluent'
+    
+  schemas-path:
+    description: 'Path to schema files'
+    required: false
+    default: './schemas'
+    
+  schema-file:
+    description: 'Single schema file path'
+    required: false
+    
+  subject:
+    description: 'Schema subject name'
+    required: false
+    
+  subject-prefix:
+    description: 'Prefix to add to all subjects'
+    required: false
+    default: ''
+    
+  compatibility-level:
+    description: 'Compatibility level (BACKWARD, FORWARD, FULL, NONE)'
+    required: false
+    default: 'BACKWARD'
+    
+  schema-type:
+    description: 'Schema type (avro, protobuf, json)'
+    required: false
+    default: 'avro'
+    
+  output-format:
+    description: 'Output format (json, table, markdown)'
+    required: false
+    default: 'json'
+    
+  output-path:
+    description: 'Output path for exports'
+    required: false
+    
+  fail-on-error:
+    description: 'Fail the action on any error'
+    required: false
+    default: 'true'
+    
+  dry-run:
+    description: 'Perform a dry run without making changes'
+    required: false
+    default: 'false'
+    
+  create-subjects:
+    description: 'Create subjects if they do not exist'
+    required: false
+    default: 'true'
+    
+  normalize-schemas:
+    description: 'Normalize schemas before deployment'
+    required: false
+    default: 'true'
+    
+  include-versions:
+    description: 'Include versions (all, latest)'
+    required: false
+    default: 'latest'
+    
+  rules-file:
+    description: 'Path to linting rules file'
+    required: false
+    
+  source-registry:
+    description: 'Source registry URL for comparison'
+    required: false
+    
+  target-registry:
+    description: 'Target registry URL for comparison'
+    required: false
+    
+  auth-method:
+    description: 'Authentication method (basic, api-key, oauth)'
+    required: false
+    default: 'basic'
+    
+  username:
+    description: 'Registry username'
+    required: false
+    
+  password:
+    description: 'Registry password'
+    required: false
+    
+  api-key:
+    description: 'API key for authentication'
+    required: false
+    
+  api-secret:
+    description: 'API secret for authentication'
+    required: false
+    
+  token:
+    description: 'OAuth token'
+    required: false
+    
+  debug:
+    description: 'Enable debug logging'
+    required: false
+    default: 'false'
+    
+  verbose:
+    description: 'Enable verbose output'
+    required: false
+    default: 'false'
+    
+  cli-version:
+    description: 'Schema Registry CLI version to use'
+    required: false
+    default: 'latest'
+
+outputs:
+  validation-result:
+    description: 'Result of schema validation'
+    value: ${{ steps.execute.outputs.validation-result }}
+    
+  compatibility-result:
+    description: 'Result of compatibility check'
+    value: ${{ steps.execute.outputs.compatibility-result }}
+    
+  deployed-schemas:
+    description: 'List of deployed schemas'
+    value: ${{ steps.execute.outputs.deployed-schemas }}
+    
+  schema-diff:
+    description: 'Differences between schemas'
+    value: ${{ steps.execute.outputs.schema-diff }}
+    
+  export-path:
+    description: 'Path to exported schemas'
+    value: ${{ steps.execute.outputs.export-path }}
+    
+  operation-status:
+    description: 'Status of the operation (success/failure)'
+    value: ${{ steps.execute.outputs.operation-status }}
+    
+  error-message:
+    description: 'Error message if operation failed'
+    value: ${{ steps.execute.outputs.error-message }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Schema Registry CLI
+      id: setup
+      shell: bash
+      run: |
+        echo "Setting up Schema Registry CLI..."
+        
+        # Determine CLI tool based on registry type
+        case "${{ inputs.registry-type }}" in
+          confluent)
+            CLI_TOOL="confluent-schema-registry-cli"
+            CLI_URL="https://github.com/confluentinc/schema-registry/releases/download/v${{ inputs.cli-version }}/schema-registry-${{ inputs.cli-version }}.tar.gz"
+            ;;
+          aws-glue)
+            CLI_TOOL="aws-glue-schema-registry-cli"
+            # Install AWS CLI if needed
+            ;;
+          apicurio)
+            CLI_TOOL="apicurio-registry-cli"
+            CLI_URL="https://github.com/Apicurio/apicurio-registry/releases/download/${{ inputs.cli-version }}/apicurio-registry-cli-${{ inputs.cli-version }}.tar.gz"
+            ;;
+          *)
+            echo "Unsupported registry type: ${{ inputs.registry-type }}"
+            exit 1
+            ;;
+        esac
+        
+        # Install CLI tool
+        if [ ! -z "$CLI_URL" ]; then
+          wget -q "$CLI_URL" -O cli.tar.gz
+          tar -xzf cli.tar.gz
+          rm cli.tar.gz
+        fi
+        
+        # Set up authentication
+        if [ "${{ inputs.auth-method }}" == "basic" ] && [ ! -z "${{ inputs.username }}" ]; then
+          echo "Setting up basic authentication..."
+          export SCHEMA_REGISTRY_AUTH="${{ inputs.username }}:${{ inputs.password }}"
+        elif [ "${{ inputs.auth-method }}" == "api-key" ] && [ ! -z "${{ inputs.api-key }}" ]; then
+          echo "Setting up API key authentication..."
+          export SCHEMA_REGISTRY_API_KEY="${{ inputs.api-key }}"
+          export SCHEMA_REGISTRY_API_SECRET="${{ inputs.api-secret }}"
+        elif [ "${{ inputs.auth-method }}" == "oauth" ] && [ ! -z "${{ inputs.token }}" ]; then
+          echo "Setting up OAuth authentication..."
+          export SCHEMA_REGISTRY_TOKEN="${{ inputs.token }}"
+        fi
+        
+    - name: Execute Operation
+      id: execute
+      shell: bash
+      run: |
+        echo "Executing operation: ${{ inputs.operation }}"
+        
+        # Set common environment variables
+        export SCHEMA_REGISTRY_URL="${{ inputs.registry-url }}"
+        export DEBUG="${{ inputs.debug }}"
+        export VERBOSE="${{ inputs.verbose }}"
+        
+        # Execute operation
+        case "${{ inputs.operation }}" in
+          validate)
+            ${{ github.action_path }}/scripts/validate.sh \
+              --path "${{ inputs.schemas-path }}" \
+              --type "${{ inputs.schema-type }}" \
+              --output-format "${{ inputs.output-format }}"
+            ;;
+            
+          check-compatibility)
+            ${{ github.action_path }}/scripts/check-compatibility.sh \
+              --path "${{ inputs.schemas-path }}" \
+              --subject "${{ inputs.subject }}" \
+              --schema-file "${{ inputs.schema-file }}" \
+              --compatibility-level "${{ inputs.compatibility-level }}" \
+              --registry-url "${{ inputs.registry-url }}"
+            ;;
+            
+          deploy)
+            ${{ github.action_path }}/scripts/deploy.sh \
+              --path "${{ inputs.schemas-path }}" \
+              --registry-url "${{ inputs.registry-url }}" \
+              --dry-run "${{ inputs.dry-run }}" \
+              --create-subjects "${{ inputs.create-subjects }}" \
+              --normalize "${{ inputs.normalize-schemas }}" \
+              --subject-prefix "${{ inputs.subject-prefix }}"
+            ;;
+            
+          compare)
+            ${{ github.action_path }}/scripts/compare.sh \
+              --source "${{ inputs.source-registry }}" \
+              --target "${{ inputs.target-registry }}" \
+              --output-format "${{ inputs.output-format }}"
+            ;;
+            
+          export)
+            ${{ github.action_path }}/scripts/export.sh \
+              --registry-url "${{ inputs.registry-url }}" \
+              --output-path "${{ inputs.output-path }}" \
+              --include-versions "${{ inputs.include-versions }}"
+            ;;
+            
+          lint)
+            ${{ github.action_path }}/scripts/lint.sh \
+              --path "${{ inputs.schemas-path }}" \
+              --rules-file "${{ inputs.rules-file }}" \
+              --output-format "${{ inputs.output-format }}"
+            ;;
+            
+          generate-docs)
+            ${{ github.action_path }}/scripts/generate-docs.sh \
+              --path "${{ inputs.schemas-path }}" \
+              --output-path "${{ inputs.output-path }}" \
+              --format "${{ inputs.output-format }}"
+            ;;
+            
+          *)
+            echo "Unknown operation: ${{ inputs.operation }}"
+            exit 1
+            ;;
+        esac
+        
+    - name: Process Results
+      if: always()
+      shell: bash
+      run: |
+        # Process and format results based on operation
+        if [ -f "operation-result.json" ]; then
+          cat operation-result.json
+          
+          # Extract outputs
+          echo "validation-result=$(jq -r '.validation_result // empty' operation-result.json)" >> $GITHUB_OUTPUT
+          echo "compatibility-result=$(jq -r '.compatibility_result // empty' operation-result.json)" >> $GITHUB_OUTPUT
+          echo "deployed-schemas=$(jq -r '.deployed_schemas // empty' operation-result.json)" >> $GITHUB_OUTPUT
+          echo "schema-diff=$(jq -r '.schema_diff // empty' operation-result.json)" >> $GITHUB_OUTPUT
+          echo "export-path=$(jq -r '.export_path // empty' operation-result.json)" >> $GITHUB_OUTPUT
+          echo "operation-status=$(jq -r '.status // "unknown"' operation-result.json)" >> $GITHUB_OUTPUT
+          echo "error-message=$(jq -r '.error_message // empty' operation-result.json)" >> $GITHUB_OUTPUT
+        fi
+        
+        # Check if we should fail
+        if [ "${{ inputs.fail-on-error }}" == "true" ] && [ -f "operation-failed" ]; then
+          echo "Operation failed!"
+          exit 1
+        fi
