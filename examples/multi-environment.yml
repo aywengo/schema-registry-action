@@ -1,0 +1,107 @@
+name: Multi-Environment Schema Deployment
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  DEV_REGISTRY_URL: https://dev-schema-registry.example.com
+  STAGING_REGISTRY_URL: https://staging-schema-registry.example.com
+  PROD_REGISTRY_URL: https://prod-schema-registry.example.com
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Validate all schemas
+        uses: aywengo/schema-registry-action@v1
+        with:
+          operation: 'validate'
+          schemas-path: './schemas'
+
+  check-compatibility:
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Check compatibility with production
+        uses: aywengo/schema-registry-action@v1
+        with:
+          operation: 'check-compatibility'
+          registry-url: ${{ env.PROD_REGISTRY_URL }}
+          schemas-path: './schemas'
+          compatibility-level: 'BACKWARD'
+          username: ${{ secrets.PROD_REGISTRY_USERNAME }}
+          password: ${{ secrets.PROD_REGISTRY_PASSWORD }}
+
+  deploy-dev:
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.ref == 'refs/heads/develop'
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Deploy to development
+        uses: aywengo/schema-registry-action@v1
+        with:
+          operation: 'deploy'
+          registry-url: ${{ env.DEV_REGISTRY_URL }}
+          schemas-path: './schemas'
+          subject-prefix: 'dev-'
+          username: ${{ secrets.DEV_REGISTRY_USERNAME }}
+          password: ${{ secrets.DEV_REGISTRY_PASSWORD }}
+
+  deploy-staging:
+    runs-on: ubuntu-latest
+    needs: [validate, check-compatibility]
+    if: github.ref == 'refs/heads/main'
+    environment: staging
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Deploy to staging
+        uses: aywengo/schema-registry-action@v1
+        with:
+          operation: 'deploy'
+          registry-url: ${{ env.STAGING_REGISTRY_URL }}
+          schemas-path: './schemas'
+          username: ${{ secrets.STAGING_REGISTRY_USERNAME }}
+          password: ${{ secrets.STAGING_REGISTRY_PASSWORD }}
+
+  deploy-production:
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Backup production schemas
+        uses: aywengo/schema-registry-action@v1
+        with:
+          operation: 'export'
+          registry-url: ${{ env.PROD_REGISTRY_URL }}
+          output-path: './backup/prod'
+          username: ${{ secrets.PROD_REGISTRY_USERNAME }}
+          password: ${{ secrets.PROD_REGISTRY_PASSWORD }}
+          
+      - name: Upload backup
+        uses: actions/upload-artifact@v3
+        with:
+          name: prod-backup-${{ github.run_id }}
+          path: ./backup/prod
+          
+      - name: Deploy to production
+        uses: aywengo/schema-registry-action@v1
+        with:
+          operation: 'deploy'
+          registry-url: ${{ env.PROD_REGISTRY_URL }}
+          schemas-path: './schemas'
+          username: ${{ secrets.PROD_REGISTRY_USERNAME }}
+          password: ${{ secrets.PROD_REGISTRY_PASSWORD }}

@@ -1,0 +1,30 @@
+name: Basic Schema Registry Workflow
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'schemas/**'
+
+jobs:
+  schema-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Validate schemas
+        uses: aywengo/schema-registry-action@v1
+        with:
+          operation: 'validate'
+          schemas-path: './schemas'
+          schema-type: 'avro'
+          
+      - name: Deploy to Schema Registry
+        uses: aywengo/schema-registry-action@v1
+        with:
+          operation: 'deploy'
+          registry-url: ${{ secrets.SCHEMA_REGISTRY_URL }}
+          schemas-path: './schemas'
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}

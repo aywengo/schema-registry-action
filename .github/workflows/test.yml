@@ -1,0 +1,41 @@
+name: Test
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Create test schemas
+        run: |
+          mkdir -p test/schemas/avro
+          cat > test/schemas/avro/user-events.avsc << EOF
+          {
+            "namespace": "com.example",
+            "type": "record",
+            "name": "UserEvent",
+            "fields": [
+              {"name": "id", "type": "string"},
+              {"name": "timestamp", "type": "long"},
+              {"name": "event_type", "type": "string"}
+            ]
+          }
+          EOF
+          
+      - name: Test validation
+        uses: ./
+        with:
+          operation: 'validate'
+          schemas-path: './test/schemas'
+          
+      - name: Verify validation output
+        run: |
+          if [ -f operation-result.json ]; then
+            cat operation-result.json
+            jq -e '.status == "success"' operation-result.json
+          else
+            echo "No operation result found"
+            exit 1
+          fi
