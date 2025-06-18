@@ -39,6 +39,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Set up logging for GitHub Actions artifact collection
+LOG_FILE="/tmp/test_integration_output.log"
+touch "$LOG_FILE"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -79,6 +83,10 @@ log_verbose() {
 cleanup() {
   log_verbose "Cleaning up temporary directory: $TEMP_DIR"
   rm -rf "$TEMP_DIR"
+  # Ensure log file exists for artifact upload
+  if [ ! -f "$LOG_FILE" ]; then
+    echo "Integration tests completed at $(date)" > "$LOG_FILE"
+  fi
 }
 trap cleanup EXIT
 
@@ -95,14 +103,17 @@ run_test_suite() {
   
   local start_time=$(date +%s)
   
+  # Create log file name for GitHub Actions artifact upload
+  local log_filename="/tmp/test_${test_name// /_}.log"
+  
   if [ "$VERBOSE" = true ]; then
-    if bash "$test_script" --verbose $test_args; then
+    if bash "$test_script" --verbose $test_args 2>&1 | tee "$log_filename"; then
       local exit_code=0
     else
       local exit_code=$?
     fi
   else
-    if bash "$test_script" $test_args 2>&1 | tee "$TEMP_DIR/${test_name}.log"; then
+    if bash "$test_script" $test_args 2>&1 | tee "$TEMP_DIR/${test_name}.log" "$log_filename"; then
       local exit_code=0
     else
       local exit_code=$?
@@ -120,9 +131,9 @@ run_test_suite() {
     FAILED_SUITE_NAMES+=("$test_name")
     log_error "$test_name failed (${duration}s)"
     
-    if [ "$VERBOSE" = false ] && [ -f "$TEMP_DIR/${test_name}.log" ]; then
+    if [ "$VERBOSE" = false ] && [ -f "$log_filename" ]; then
       echo "Last 20 lines of output:"
-      tail -20 "$TEMP_DIR/${test_name}.log" | sed 's/^/  /'
+      tail -20 "$log_filename" | sed 's/^/  /'
     fi
   fi
   
@@ -331,6 +342,9 @@ run_script_test() {
 
 # Main test execution
 main() {
+  # Ensure output goes to both console and log file
+  exec > >(tee -a "$LOG_FILE") 2>&1
+  
   echo "========================================"
   echo "       ksr-cli GitHub Action Tests      "
   echo "========================================"

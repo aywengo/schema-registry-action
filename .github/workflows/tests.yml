@@ -72,8 +72,8 @@ jobs:
       with:
         name: test-results-${{ matrix.test-type }}
         path: |
+          /tmp/test_*_output.log
           /tmp/test_*.log
-          /tmp/*_output.log
         retention-days: 30
   
   # Test scripts individually

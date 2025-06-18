@@ -31,6 +31,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Set up logging for GitHub Actions artifact collection
+LOG_FILE="/tmp/test_unit_output.log"
+touch "$LOG_FILE"
+
 # Cleanup function
 cleanup() {
   log_verbose "Cleaning up temporary directory: $TEMP_DIR"
@@ -38,6 +42,10 @@ cleanup() {
   # Stop mock server if running
   if [ ! -z "${MOCK_SERVER_PID:-}" ]; then
     kill $MOCK_SERVER_PID 2>/dev/null || true
+  fi
+  # Ensure log file exists for artifact upload
+  if [ ! -f "$LOG_FILE" ]; then
+    echo "Unit tests completed at $(date)" > "$LOG_FILE"
   fi
 }
 trap cleanup EXIT
@@ -346,6 +354,9 @@ test_output_formats() {
 
 # Main test execution
 main() {
+  # Ensure output goes to both console and log file
+  exec > >(tee -a "$LOG_FILE") 2>&1
+  
   log_info "Starting ksr-cli GitHub Action unit tests"
   log_info "Test directory: $TEMP_DIR"
   
