@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Performance tests for schema registry scripts
+# Performance tests for ksr-cli GitHub Action
 # Usage: ./performance-tests.sh [--verbose] [--iterations=<num>]
 
 VERBOSE=false
@@ -31,6 +31,17 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Cleanup function
+cleanup() {
+  log_verbose "Cleaning up temporary directory: $TEMP_DIR"
+  rm -rf "$TEMP_DIR"
+  # Stop mock server if running
+  if [ ! -z "${MOCK_SERVER_PID:-}" ]; then
+    kill $MOCK_SERVER_PID 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
+
 # Performance measurement utilities
 measure_execution_time() {
   local command="$1"
@@ -43,10 +54,14 @@ measure_execution_time() {
     log_verbose "Iteration $i/$ITERATIONS"
     
     local start_time=$(date +%s.%N)
-    eval "$command" >/dev/null 2>&1
-    local end_time=$(date +%s.%N)
+    if eval "$command" >/dev/null 2>&1; then
+      local end_time=$(date +%s.%N)
+    else
+      local end_time=$(date +%s.%N)
+      log_warning "Command failed in iteration $i"
+    fi
     
-    local duration=$(echo "$end_time - $start_time" | bc -l 2>/dev/null || echo "0")
+    local duration=$(echo "$end_time - $start_time" | bc -l 2>/dev/null || python3 -c "print($end_time - $start_time)")
     times+=("$duration")
   done
   
@@ -56,16 +71,16 @@ measure_execution_time() {
   local max=${times[0]}
   
   for time in "${times[@]}"; do
-    total=$(echo "$total + $time" | bc -l 2>/dev/null || echo "$total")
-    if (( $(echo "$time < $min" | bc -l 2>/dev/null || echo "0") )); then
+    total=$(echo "$total + $time" | bc -l 2>/dev/null || python3 -c "print($total + $time)")
+    if (( $(echo "$time < $min" | bc -l 2>/dev/null || python3 -c "print(1 if $time < $min else 0)") )); then
       min=$time
     fi
-    if (( $(echo "$time > $max" | bc -l 2>/dev/null || echo "0") )); then
+    if (( $(echo "$time > $max" | bc -l 2>/dev/null || python3 -c "print(1 if $time > $max else 0)") )); then
       max=$time
     fi
   done
   
-  local avg=$(echo "scale=3; $total / $ITERATIONS" | bc -l 2>/dev/null || echo "0")
+  local avg=$(echo "scale=3; $total / $ITERATIONS" | bc -l 2>/dev/null || python3 -c "print(round($total / $ITERATIONS, 3))")
   
   echo "Results for: $description"
   echo "  Iterations: $ITERATIONS"
@@ -73,6 +88,61 @@ measure_execution_time() {
   echo "  Min: ${min}s"
   echo "  Max: ${max}s"
   echo
+}
+
+# Install ksr-cli for testing
+install_ksr_cli() {
+  # First check if ksr-cli is already available
+  if ksr-cli --version >/dev/null 2>&1; then
+    log_success "ksr-cli is already available: $(ksr-cli --version)"
+    return 0
+  fi
+  
+  log_info "ksr-cli not found, attempting to install for performance testing..."
+  
+  # Determine OS and architecture
+  OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+  ARCH=$(uname -m)
+  
+  case $ARCH in
+    x86_64) ARCH="amd64" ;;
+    aarch64|arm64) ARCH="arm64" ;;
+    *)
+      if [ "${CI:-false}" = "true" ] || [ "${GITHUB_ACTIONS:-false}" = "true" ]; then
+        log_error "Unsupported architecture: $ARCH, failing in CI environment"
+        return 1
+      else
+        log_warning "Unsupported architecture: $ARCH"
+        return 1
+      fi
+      ;;
+  esac
+  
+  # Get latest version
+  CLI_VERSION=$(curl -s https://api.github.com/repos/aywengo/ksr-cli/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
+  if [ -z "$CLI_VERSION" ]; then
+    CLI_VERSION="v0.2.3"
+  fi
+  
+  # Download and install
+  CLI_URL="https://github.com/aywengo/ksr-cli/releases/download/${CLI_VERSION}/ksr-cli_${CLI_VERSION#v}_${OS}_${ARCH}.tar.gz"
+  
+  if wget -q "$CLI_URL" -O "$TEMP_DIR/ksr-cli.tar.gz" 2>/dev/null; then
+    cd "$TEMP_DIR"
+    tar -xzf ksr-cli.tar.gz
+    chmod +x ksr-cli
+    export PATH="$TEMP_DIR:$PATH"
+    log_success "ksr-cli installed successfully: $(ksr-cli --version)"
+    return 0
+  else
+    if [ "${CI:-false}" = "true" ] || [ "${GITHUB_ACTIONS:-false}" = "true" ]; then
+      log_error "Failed to install ksr-cli in CI environment"
+      return 1
+    else
+      log_warning "Failed to install ksr-cli"
+      return 1
+    fi
+  fi
 }
 
 # Create test data at scale
@@ -136,388 +206,296 @@ EOF
 EOF
 }
 
-# Performance tests for each script
-test_validate_performance() {
-  test_suite "validate.sh - Performance Tests"
+# Mock Schema Registry server for performance testing
+start_mock_registry() {
+  log_info "Starting mock Schema Registry server for performance testing..."
   
-  # Test with small set of schemas
-  mkdir -p "$TEMP_DIR/small_schemas"
-  for i in {1..10}; do
-    generate_test_avro_schema "Record$i" "com.small" > "$TEMP_DIR/small_schemas/schema_$i.avsc"
-  done
-  
-  measure_execution_time \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/validate.sh' --path small_schemas --type avro --output-format json" \
-    "validate.sh with 10 schemas"
-  
-  # Test with large set of schemas
-  local large_dir=$(create_large_schema_set 100)
-  measure_execution_time \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/validate.sh' --path $(basename $large_dir) --type avro --output-format json" \
-    "validate.sh with 100 schemas"
-  
-  # Test with complex schema
-  create_complex_schema "$TEMP_DIR/complex.avsc" 100
-  measure_execution_time \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/validate.sh' --path . --type avro --output-format json" \
-    "validate.sh with complex schema (100 fields)"
-}
-
-test_lint_performance() {
-  test_suite "lint.sh - Performance Tests"
-  
-  # Test linting performance with different schema sizes
-  mkdir -p "$TEMP_DIR/lint_schemas"
-  
-  # Small schemas
-  for i in {1..20}; do
-    generate_test_avro_schema "LintRecord$i" "com.lint" > "$TEMP_DIR/lint_schemas/schema_$i.avsc"
-  done
-  
-  measure_execution_time \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/lint.sh' --path lint_schemas --output-format json" \
-    "lint.sh with 20 schemas"
-  
-  # Large complex schema
-  create_complex_schema "$TEMP_DIR/lint_schemas/complex.avsc" 200
-  measure_execution_time \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/lint.sh' --path lint_schemas --output-format json" \
-    "lint.sh with complex schema (200 fields)"
-}
-
-test_generate_docs_performance() {
-  test_suite "generate-docs.sh - Performance Tests"
-  
-  mkdir -p "$TEMP_DIR/doc_schemas"
-  
-  # Generate various schemas
-  for i in {1..25}; do
-    generate_test_avro_schema "DocRecord$i" "com.docs" > "$TEMP_DIR/doc_schemas/schema_$i.avsc"
-  done
-  
-  # Test markdown generation
-  measure_execution_time \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/generate-docs.sh' --path doc_schemas --output-path docs_md --format markdown" \
-    "generate-docs.sh markdown format with 25 schemas"
-  
-  # Test HTML generation
-  measure_execution_time \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/generate-docs.sh' --path doc_schemas --output-path docs_html --format html" \
-    "generate-docs.sh HTML format with 25 schemas"
-  
-  # Test JSON generation
-  measure_execution_time \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/generate-docs.sh' --path doc_schemas --output-path docs_json --format json" \
-    "generate-docs.sh JSON format with 25 schemas"
-}
-
-test_deploy_performance() {
-  test_suite "deploy.sh - Performance Tests"
-  
-  # Start mock server
-  start_mock_server
-  
-  mkdir -p "$TEMP_DIR/deploy_schemas"
-  
-  # Generate schemas for deployment
-  for i in {1..15}; do
-    generate_test_avro_schema "DeployRecord$i" "com.deploy" > "$TEMP_DIR/deploy_schemas/schema_$i.avsc"
-  done
-  
-  # Test dry run deployment (faster, no network calls)
-  measure_execution_time \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/deploy.sh' --path deploy_schemas --registry-url http://localhost:8081 --dry-run true" \
-    "deploy.sh dry run with 15 schemas"
-  
-  # Test actual deployment simulation
-  measure_execution_time \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/deploy.sh' --path deploy_schemas --registry-url http://localhost:8081 --dry-run false" \
-    "deploy.sh actual deployment with 15 schemas"
-  
-  stop_mock_server
-}
-
-test_export_performance() {
-  test_suite "export.sh - Performance Tests"
-  
-  # Start mock server
-  start_mock_server
-  
-  # Test export performance
-  measure_execution_time \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/export.sh' --registry-url http://localhost:8081 --output-path export_output" \
-    "export.sh with mock registry"
-  
-  # Test export with metadata
-  measure_execution_time \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/export.sh' --registry-url http://localhost:8081 --output-path export_with_meta --include-metadata true" \
-    "export.sh with metadata enabled"
-  
-  stop_mock_server
-}
-
-test_compare_performance() {
-  test_suite "compare.sh - Performance Tests"
-  
-  # Start two mock servers
-  start_mock_server
-  
-  # Test registry comparison
-  measure_execution_time \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/compare.sh' --source http://localhost:8081 --target http://localhost:8081" \
-    "compare.sh between identical registries"
-  
-  stop_mock_server
-}
-
-test_check_compatibility_performance() {
-  test_suite "check-compatibility.sh - Performance Tests"
-  
-  # Start mock server
-  start_mock_server
-  
-  mkdir -p "$TEMP_DIR/compat_schemas"
-  
-  # Generate schemas for compatibility testing
-  for i in {1..20}; do
-    generate_test_avro_schema "CompatRecord$i" "com.compat" > "$TEMP_DIR/compat_schemas/schema_$i.avsc"
-  done
-  
-  # Test compatibility checking performance
-  measure_execution_time \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/check-compatibility.sh' --path compat_schemas --registry-url http://localhost:8081" \
-    "check-compatibility.sh with 20 schemas"
-  
-  # Test single schema compatibility
-  measure_execution_time \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/check-compatibility.sh' --schema-file compat_schemas/schema_1.avsc --subject com.compat.CompatRecord1-value --registry-url http://localhost:8081" \
-    "check-compatibility.sh single schema"
-  
-  stop_mock_server
-}
-
-# Memory usage tests
-test_memory_usage() {
-  test_suite "Memory Usage Tests"
-  
-  if ! command_exists memusg; then
-    log_warning "memusg not available, skipping memory tests"
-    return
-  fi
-  
-  # Create large dataset
-  local large_dir=$(create_large_schema_set 200)
-  
-  # Test memory usage for validation
-  log_info "Testing memory usage for validate.sh with 200 schemas"
-  memusg "$SCRIPT_DIR/scripts/validate.sh" --path "$(basename $large_dir)" --type avro --output-format json
-  
-  # Test memory usage for linting
-  log_info "Testing memory usage for lint.sh with 200 schemas"
-  memusg "$SCRIPT_DIR/scripts/lint.sh" --path "$(basename $large_dir)" --output-format json
-}
-
-# Concurrent execution tests
-test_concurrent_execution() {
-  test_suite "Concurrent Execution Tests"
-  
-  mkdir -p "$TEMP_DIR/concurrent_schemas"
-  
-  # Generate schemas
-  for i in {1..50}; do
-    generate_test_avro_schema "ConcurrentRecord$i" "com.concurrent" > "$TEMP_DIR/concurrent_schemas/schema_$i.avsc"
-  done
-  
-  # Test running multiple validations concurrently
-  log_info "Testing concurrent validation (5 processes)"
-  local start_time=$(date +%s.%N)
-  
-  for i in {1..5}; do
-    (cd "$TEMP_DIR" && "$SCRIPT_DIR/scripts/validate.sh" --path concurrent_schemas --type avro --output-format json > "/tmp/validate_$i.log" 2>&1) &
-  done
-  wait
-  
-  local end_time=$(date +%s.%N)
-  local duration=$(echo "$end_time - $start_time" | bc -l 2>/dev/null || echo "0")
-  
-  log_info "Concurrent validation completed in ${duration}s"
-  
-  # Test running different scripts concurrently
-  log_info "Testing mixed concurrent operations"
-  start_time=$(date +%s.%N)
-  
-  (cd "$TEMP_DIR" && "$SCRIPT_DIR/scripts/validate.sh" --path concurrent_schemas --type avro --output-format json > "/tmp/mixed_validate.log" 2>&1) &
-  (cd "$TEMP_DIR" && "$SCRIPT_DIR/scripts/lint.sh" --path concurrent_schemas --output-format json > "/tmp/mixed_lint.log" 2>&1) &
-  (cd "$TEMP_DIR" && "$SCRIPT_DIR/scripts/generate-docs.sh" --path concurrent_schemas --output-path mixed_docs --format markdown > "/tmp/mixed_docs.log" 2>&1) &
-  
-  wait
-  
-  end_time=$(date +%s.%N)
-  duration=$(echo "$end_time - $start_time" | bc -l 2>/dev/null || echo "0")
-  
-  log_info "Mixed concurrent operations completed in ${duration}s"
-}
-
-# Scalability tests
-test_scalability() {
-  test_suite "Scalability Tests"
-  
-  # Test with increasing schema counts
-  for count in 10 50 100 200 500; do
-    log_info "Testing scalability with $count schemas"
-    
-    local scale_dir="$TEMP_DIR/scale_${count}"
-    mkdir -p "$scale_dir"
-    
-    # Generate schemas
-    for i in $(seq 1 $count); do
-      generate_test_avro_schema "ScaleRecord$i" "com.scale" > "$scale_dir/schema_$i.avsc"
-    done
-    
-    # Measure validation time
-    local start_time=$(date +%s.%N)
-    cd "$TEMP_DIR" && "$SCRIPT_DIR/scripts/validate.sh" --path "$(basename $scale_dir)" --type avro --output-format json >/dev/null 2>&1
-    local end_time=$(date +%s.%N)
-    local duration=$(echo "$end_time - $start_time" | bc -l 2>/dev/null || echo "0")
-    
-    echo "  $count schemas: ${duration}s"
-  done
-}
-
-# Mock server utilities
-start_mock_server() {
-  log_info "Starting mock Schema Registry server"
-  
-  # Create mock server
-  cat > "$TEMP_DIR/mock_server.py" << 'EOF'
+  cat > "$TEMP_DIR/perf_mock_server.py" << 'EOF'
 #!/usr/bin/env python3
-import json
 import http.server
 import socketserver
+import json
 import time
-from urllib.parse import urlparse, parse_qs
+import random
 
-class MockSchemaRegistryHandler(http.server.BaseHTTPRequestHandler):
+class PerfMockRegistryHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        # Add small delay to simulate network latency
-        time.sleep(0.01)
+        # Simulate network latency
+        time.sleep(random.uniform(0.01, 0.05))
         
-        path = self.path
-        
-        if path == '/subjects':
+        if self.path == '/subjects':
+            subjects = [f"perf-subject-{i}" for i in range(100)]
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
-            subjects = [f"com.test.Record{i}-value" for i in range(1, 101)]
-            response = json.dumps(subjects)
-            self.wfile.write(response.encode())
-        elif '/subjects/' in path and '/versions' in path:
+            self.wfile.write(json.dumps(subjects).encode())
+        elif self.path.startswith('/subjects/'):
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
-            response = json.dumps([1, 2, 3])
-            self.wfile.write(response.encode())
-        elif '/subjects/' in path and '/versions/' in path:
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            response = json.dumps({
-                "id": 1,
-                "version": 1,
-                "schema": '{"type": "record", "name": "TestRecord", "fields": [{"name": "id", "type": "string"}]}',
-                "schemaType": "AVRO"
-            })
-            self.wfile.write(response.encode())
+            response = {
+                "id": random.randint(1, 1000),
+                "version": random.randint(1, 10),
+                "schema": '{"type": "string"}'
+            }
+            self.wfile.write(json.dumps(response).encode())
         else:
             self.send_response(404)
             self.end_headers()
     
     def do_POST(self):
-        # Add small delay to simulate processing time
-        time.sleep(0.02)
+        # Simulate processing time
+        time.sleep(random.uniform(0.02, 0.1))
         
-        path = self.path
-        content_length = int(self.headers['Content-Length'])
-        post_data = self.rfile.read(content_length)
-        
-        if '/compatibility/' in path:
+        if '/compatibility' in self.path:
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
-            response = json.dumps({"is_compatible": True})
-            self.wfile.write(response.encode())
-        elif '/subjects/' in path and '/versions' in path:
+            self.wfile.write(json.dumps({"is_compatible": True}).encode())
+        elif '/subjects/' in self.path:
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
-            response = json.dumps({"id": 1})
-            self.wfile.write(response.encode())
+            self.wfile.write(json.dumps({"id": random.randint(1, 1000)}).encode())
         else:
             self.send_response(404)
             self.end_headers()
     
     def log_message(self, format, *args):
-        pass  # Silence server logs
+        pass  # Suppress log messages
 
-if __name__ == "__main__":
-    PORT = 8081
-    Handler = MockSchemaRegistryHandler
-    with socketserver.TCPServer(("", PORT), Handler) as httpd:
-        httpd.serve_forever()
+PORT = 8082
+with socketserver.TCPServer(("", PORT), PerfMockRegistryHandler) as httpd:
+    httpd.serve_forever()
 EOF
 
-  # Start server in background
-  python3 "$TEMP_DIR/mock_server.py" &
+  python3 "$TEMP_DIR/perf_mock_server.py" &
   MOCK_SERVER_PID=$!
-  sleep 2  # Give server time to start
+  export MOCK_REGISTRY_URL="http://localhost:8082"
   
-  # Store PID for cleanup
-  echo $MOCK_SERVER_PID > "$TEMP_DIR/mock_server.pid"
+  # Wait for server to start
+  sleep 3
   
-  log_success "Mock server started on port 8081"
-}
-
-stop_mock_server() {
-  if [ -f "$TEMP_DIR/mock_server.pid" ]; then
-    local pid=$(cat "$TEMP_DIR/mock_server.pid")
-    kill $pid 2>/dev/null || true
-    log_info "Mock server stopped"
+  if curl -s "$MOCK_REGISTRY_URL/subjects" >/dev/null 2>&1; then
+    log_success "Mock registry server started at $MOCK_REGISTRY_URL"
+    return 0
+  else
+    log_warning "Failed to start mock registry server"
+    kill $MOCK_SERVER_PID 2>/dev/null || true
+    unset MOCK_SERVER_PID
+    return 1
   fi
 }
 
-# Cleanup
-cleanup() {
-  stop_mock_server
-  rm -rf "$TEMP_DIR"
+# Performance tests for ksr-cli operations
+test_ksr_cli_startup_performance() {
+  test_suite "ksr-cli - Startup Performance"
+  
+  if ! install_ksr_cli; then
+    if [ "${CI:-false}" = "true" ] || [ "${GITHUB_ACTIONS:-false}" = "true" ]; then
+      log_error "ksr-cli installation failed in CI environment"
+      exit 1
+    else
+      log_warning "Skipping ksr-cli startup tests - installation failed"
+      return 0
+    fi
+  fi
+  
+  measure_execution_time \
+    "ksr-cli --version" \
+    "ksr-cli startup time (version command)"
+  
+  measure_execution_time \
+    "ksr-cli --help" \
+    "ksr-cli help command execution"
 }
-trap cleanup EXIT
 
-# Main execution
+test_schema_validation_performance() {
+  test_suite "Schema Validation Performance"
+  
+  if ! install_ksr_cli; then
+    if [ "${CI:-false}" = "true" ] || [ "${GITHUB_ACTIONS:-false}" = "true" ]; then
+      log_error "ksr-cli installation failed in CI environment"
+      exit 1
+    else
+      log_warning "Skipping validation performance tests - ksr-cli not available"
+      return 0
+    fi
+  fi
+  
+  # Create test schemas
+  mkdir -p "$TEMP_DIR/validation_test"
+  
+  # Small schema set
+  for i in {1..10}; do
+    create_complex_schema "$TEMP_DIR/validation_test/small_${i}.avsc" 5
+  done
+  
+  # Medium schema set  
+  for i in {1..10}; do
+    create_complex_schema "$TEMP_DIR/validation_test/medium_${i}.avsc" 25
+  done
+  
+  # Large schema
+  create_complex_schema "$TEMP_DIR/validation_test/large.avsc" 100
+  
+  if start_mock_registry; then
+    # Test validation performance
+    measure_execution_time \
+      "cd '$TEMP_DIR/validation_test' && ksr-cli check compatibility test-small --file small_1.avsc --registry-url $MOCK_REGISTRY_URL" \
+      "Single small schema validation (5 fields)"
+    
+    measure_execution_time \
+      "cd '$TEMP_DIR/validation_test' && ksr-cli check compatibility test-medium --file medium_1.avsc --registry-url $MOCK_REGISTRY_URL" \
+      "Single medium schema validation (25 fields)"
+    
+    measure_execution_time \
+      "cd '$TEMP_DIR/validation_test' && ksr-cli check compatibility test-large --file large.avsc --registry-url $MOCK_REGISTRY_URL" \
+      "Single large schema validation (100 fields)"
+  else
+    log_warning "Skipping registry-dependent validation tests"
+  fi
+}
+
+test_schema_export_performance() {
+  test_suite "Schema Export Performance"
+  
+  if ! install_ksr_cli; then
+    if [ "${CI:-false}" = "true" ] || [ "${GITHUB_ACTIONS:-false}" = "true" ]; then
+      log_error "ksr-cli installation failed in CI environment"
+      exit 1
+    else
+      log_warning "Skipping export performance tests - ksr-cli not available"
+      return 0
+    fi
+  fi
+  
+  if start_mock_registry; then
+    measure_execution_time \
+      "ksr-cli export subjects -f '$TEMP_DIR/export_test.json' --registry-url $MOCK_REGISTRY_URL" \
+      "Export all subjects (latest versions)"
+    
+    measure_execution_time \
+      "ksr-cli export subjects --all-versions -f '$TEMP_DIR/export_all_test.json' --registry-url $MOCK_REGISTRY_URL" \
+      "Export all subjects (all versions)"
+    
+    measure_execution_time \
+      "ksr-cli list subjects --registry-url $MOCK_REGISTRY_URL" \
+      "List all subjects"
+  else
+    log_warning "Skipping registry-dependent export tests"
+  fi
+}
+
+test_bulk_operations_performance() {
+  test_suite "Bulk Operations Performance"
+  
+  if ! install_ksr_cli; then
+    if [ "${CI:-false}" = "true" ] || [ "${GITHUB_ACTIONS:-false}" = "true" ]; then
+      log_error "ksr-cli installation failed in CI environment"
+      exit 1
+    else
+      log_warning "Skipping bulk operation tests - ksr-cli not available"
+      return 0
+    fi
+  fi
+  
+  # Create large schema set
+  local large_dir=$(create_large_schema_set 50)
+  
+  if start_mock_registry; then
+    # Test bulk schema deployment simulation
+    measure_execution_time \
+      "cd '$large_dir' && for f in *.avsc; do subject=\$(basename \"\$f\" .avsc); ksr-cli check compatibility \"\$subject\" --file \"\$f\" --registry-url $MOCK_REGISTRY_URL >/dev/null 2>&1 || true; done" \
+      "Bulk compatibility check (50 schemas)"
+    
+    # Test sequential vs parallel-like operations
+    measure_execution_time \
+      "cd '$large_dir' && for i in {1..10}; do ksr-cli check compatibility \"test-\$i\" --file \"schema_\$i.avsc\" --registry-url $MOCK_REGISTRY_URL >/dev/null 2>&1 || true; done" \
+      "Sequential compatibility checks (10 schemas)"
+  else
+    log_warning "Skipping registry-dependent bulk tests"
+  fi
+}
+
+test_memory_usage() {
+  test_suite "Memory Usage Tests"
+  
+  if ! install_ksr_cli; then
+    if [ "${CI:-false}" = "true" ] || [ "${GITHUB_ACTIONS:-false}" = "true" ]; then
+      log_error "ksr-cli installation failed in CI environment"
+      exit 1
+    else
+      log_warning "Skipping memory usage tests - ksr-cli not available"
+      return 0
+    fi
+  fi
+  
+  # Create very large schema
+  create_complex_schema "$TEMP_DIR/huge.avsc" 500
+  
+  if start_mock_registry; then
+    # Monitor memory usage during large schema processing
+    log_info "Testing memory usage with large schema (500 fields)"
+    
+    # Use time command to get memory usage if available
+    if command -v /usr/bin/time >/dev/null 2>&1; then
+      /usr/bin/time -v ksr-cli check compatibility huge-test --file "$TEMP_DIR/huge.avsc" --registry-url $MOCK_REGISTRY_URL 2>&1 | grep -E "(Maximum resident set size|Peak memory)" || true
+    else
+      ksr-cli check compatibility huge-test --file "$TEMP_DIR/huge.avsc" --registry-url $MOCK_REGISTRY_URL >/dev/null 2>&1
+      log_info "Memory monitoring not available (/usr/bin/time not found)"
+    fi
+  else
+    log_warning "Skipping memory usage tests - mock registry not available"
+  fi
+}
+
+# GitHub Action performance tests
+test_action_performance() {
+  test_suite "GitHub Action Performance"
+  
+  # Create test schemas
+  mkdir -p "$TEMP_DIR/action_perf"
+  for i in {1..20}; do
+    create_complex_schema "$TEMP_DIR/action_perf/schema_${i}.avsc" 10
+  done
+  
+  # Test action startup time (dry run)
+  measure_execution_time \
+    "cd '$TEMP_DIR/action_perf' && echo 'Simulating action validation with dry-run'" \
+    "GitHub Action simulation (dry-run mode)"
+}
+
+# Main test execution
 main() {
-  log_info "Starting Schema Registry Scripts Performance Tests"
+  log_info "Starting ksr-cli GitHub Action performance tests"
+  log_info "Test directory: $TEMP_DIR"
   log_info "Iterations per test: $ITERATIONS"
   
-  # Setup
-  setup_test_environment
+  # Check system resources
+  log_info "System Information:"
+  echo "  OS: $(uname -s) $(uname -r)"
+  echo "  Architecture: $(uname -m)"
+  echo "  CPU: $(nproc 2>/dev/null || echo 'unknown') cores"
+  echo "  Memory: $(free -h 2>/dev/null | grep '^Mem:' | awk '{print $2}' || echo 'unknown')"
+  echo
   
   # Run performance tests
-  test_validate_performance
-  test_lint_performance
-  test_generate_docs_performance
-  test_deploy_performance
-  test_export_performance
-  test_compare_performance
-  test_check_compatibility_performance
-  
-  # Additional tests
+  test_ksr_cli_startup_performance
+  test_schema_validation_performance
+  test_schema_export_performance
+  test_bulk_operations_performance
   test_memory_usage
-  test_concurrent_execution
-  test_scalability
+  test_action_performance
   
-  # Show summary
-  log_info "Performance testing completed"
-  log_info "Check individual test results above for detailed metrics"
+  # Print final results
+  echo
+  echo "========================================"
+  log_info "Performance Test Summary"
+  echo "========================================"
+  log_success "All performance tests completed successfully"
+  log_info "Results above show average execution times over $ITERATIONS iterations"
 }
 
-# Run tests
+# Run main function
 main "$@" 

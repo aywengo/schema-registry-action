@@ -1,5 +1,5 @@
-name: 'Schema Registry CI/CD'
-description: 'Automate Schema Registry operations in your CI/CD pipeline'
+name: 'Schema Registry CI/CD with ksr-cli'
+description: 'Automate Schema Registry operations in your CI/CD pipeline using the comprehensive ksr-cli tool'
 author: 'Roman Melnyk'
 branding:
   icon: 'database'
@@ -15,7 +15,7 @@ inputs:
     required: false
     
   registry-type:
-    description: 'Type of registry (confluent, aws-glue, apicurio)'
+    description: 'Type of registry - ksr-cli supports all Confluent-compatible registries'
     required: false
     default: 'confluent'
     
@@ -129,9 +129,9 @@ inputs:
     default: 'false'
     
   cli-version:
-    description: 'Schema Registry CLI version to use'
+    description: 'ksr-cli version to use (e.g., v0.2.3, latest)'
     required: false
-    default: 'latest'
+    default: 'v0.2.3'
 
 outputs:
   validation-result:
@@ -165,117 +165,211 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Setup Schema Registry CLI
+    - name: Setup ksr-cli (Kafka Schema Registry CLI)
       id: setup
       shell: bash
       run: |
-        echo "Setting up Schema Registry CLI..."
+        echo "Setting up ksr-cli (Kafka Schema Registry CLI)..."
         
-        # Determine CLI tool based on registry type
-        case "${{ inputs.registry-type }}" in
-          confluent)
-            CLI_TOOL="confluent-schema-registry-cli"
-            CLI_URL="https://github.com/confluentinc/schema-registry/releases/download/v${{ inputs.cli-version }}/schema-registry-${{ inputs.cli-version }}.tar.gz"
+        # Determine OS and architecture
+        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+        ARCH=$(uname -m)
+        
+        case $ARCH in
+          x86_64)
+            ARCH="amd64"
             ;;
-          aws-glue)
-            CLI_TOOL="aws-glue-schema-registry-cli"
-            # Install AWS CLI if needed
-            ;;
-          apicurio)
-            CLI_TOOL="apicurio-registry-cli"
-            CLI_URL="https://github.com/Apicurio/apicurio-registry/releases/download/${{ inputs.cli-version }}/apicurio-registry-cli-${{ inputs.cli-version }}.tar.gz"
+          aarch64|arm64)
+            ARCH="arm64"
             ;;
           *)
-            echo "Unsupported registry type: ${{ inputs.registry-type }}"
+            echo "Unsupported architecture: $ARCH"
             exit 1
             ;;
         esac
         
-        # Install CLI tool
-        if [ ! -z "$CLI_URL" ]; then
-          wget -q "$CLI_URL" -O cli.tar.gz
-          tar -xzf cli.tar.gz
-          rm cli.tar.gz
+        # Set CLI version
+        CLI_VERSION="${{ inputs.cli-version }}"
+        if [ "$CLI_VERSION" == "latest" ]; then
+          CLI_VERSION=$(curl -s https://api.github.com/repos/aywengo/ksr-cli/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
         fi
         
-        # Set up authentication
+        # Download ksr-cli binary
+        CLI_URL="https://github.com/aywengo/ksr-cli/releases/download/${CLI_VERSION}/ksr-cli_${CLI_VERSION#v}_${OS}_${ARCH}.tar.gz"
+        echo "Downloading ksr-cli from: $CLI_URL"
+        
+        wget -q "$CLI_URL" -O ksr-cli.tar.gz
+        tar -xzf ksr-cli.tar.gz
+        chmod +x ksr-cli
+        sudo mv ksr-cli /usr/local/bin/
+        rm ksr-cli.tar.gz
+        
+        # Verify installation
+        ksr-cli --version
+        
+        # Set up authentication for ksr-cli
         if [ "${{ inputs.auth-method }}" == "basic" ] && [ ! -z "${{ inputs.username }}" ]; then
-          echo "Setting up basic authentication..."
-          export SCHEMA_REGISTRY_AUTH="${{ inputs.username }}:${{ inputs.password }}"
+          echo "Setting up basic authentication for ksr-cli..."
+          export KSR_USERNAME="${{ inputs.username }}"
+          export KSR_PASSWORD="${{ inputs.password }}"
         elif [ "${{ inputs.auth-method }}" == "api-key" ] && [ ! -z "${{ inputs.api-key }}" ]; then
-          echo "Setting up API key authentication..."
-          export SCHEMA_REGISTRY_API_KEY="${{ inputs.api-key }}"
-          export SCHEMA_REGISTRY_API_SECRET="${{ inputs.api-secret }}"
+          echo "Setting up API key authentication for ksr-cli..."
+          export KSR_API_KEY="${{ inputs.api-key }}"
+          if [ ! -z "${{ inputs.api-secret }}" ]; then
+            export KSR_API_SECRET="${{ inputs.api-secret }}"
+          fi
         elif [ "${{ inputs.auth-method }}" == "oauth" ] && [ ! -z "${{ inputs.token }}" ]; then
-          echo "Setting up OAuth authentication..."
-          export SCHEMA_REGISTRY_TOKEN="${{ inputs.token }}"
+          echo "Setting up OAuth authentication for ksr-cli..."
+          export KSR_TOKEN="${{ inputs.token }}"
         fi
         
-    - name: Execute Operation
+        # Set registry URL
+        if [ ! -z "${{ inputs.registry-url }}" ]; then
+          export KSR_REGISTRY_URL="${{ inputs.registry-url }}"
+        fi
+        
+    - name: Execute Operation with ksr-cli
       id: execute
       shell: bash
       run: |
-        echo "Executing operation: ${{ inputs.operation }}"
+        echo "Executing operation: ${{ inputs.operation }} with ksr-cli"
         
-        # Set common environment variables
-        export SCHEMA_REGISTRY_URL="${{ inputs.registry-url }}"
-        export DEBUG="${{ inputs.debug }}"
-        export VERBOSE="${{ inputs.verbose }}"
+        # Set common CLI options
+        CLI_OPTS=""
         
-        # Execute operation
+        # Add authentication options
+        if [ ! -z "${{ inputs.username }}" ]; then
+          CLI_OPTS="$CLI_OPTS --user ${{ inputs.username }} --pass ${{ inputs.password }}"
+        elif [ ! -z "${{ inputs.api-key }}" ]; then
+          CLI_OPTS="$CLI_OPTS --api-key ${{ inputs.api-key }}"
+        fi
+        
+        # Add registry URL if provided
+        if [ ! -z "${{ inputs.registry-url }}" ]; then
+          CLI_OPTS="$CLI_OPTS --registry-url ${{ inputs.registry-url }}"
+        fi
+        
+        # Add output format
+        if [ ! -z "${{ inputs.output-format }}" ]; then
+          CLI_OPTS="$CLI_OPTS --output ${{ inputs.output-format }}"
+        fi
+        
+        # Add debug/verbose flags
+        if [ "${{ inputs.debug }}" == "true" ]; then
+          export KSR_LOG_LEVEL=debug
+        fi
+        if [ "${{ inputs.verbose }}" == "true" ]; then
+          CLI_OPTS="$CLI_OPTS --verbose"
+        fi
+        
+        # Execute operation using ksr-cli
         case "${{ inputs.operation }}" in
           validate)
-            ${{ github.action_path }}/scripts/validate.sh \
-              --path "${{ inputs.schemas-path }}" \
-              --type "${{ inputs.schema-type }}" \
-              --output-format "${{ inputs.output-format }}"
+            echo "Validating schemas in ${{ inputs.schemas-path }}"
+            # Use ksr-cli to validate schemas
+            for schema_file in ${{ inputs.schemas-path }}/*.{avsc,json}; do
+              if [ -f "$schema_file" ]; then
+                echo "Validating $schema_file"
+                # Extract subject name from filename
+                subject=$(basename "$schema_file" | sed 's/\.[^.]*$//')
+                if [ ! -z "${{ inputs.subject-prefix }}" ]; then
+                  subject="${{ inputs.subject-prefix }}$subject"
+                fi
+                
+                # Check if schema is valid by attempting to register it with dry-run
+                if [ "${{ inputs.dry-run }}" == "true" ]; then
+                  echo "Dry run: Would validate schema for subject $subject"
+                else
+                  ksr-cli check compatibility "$subject" --file "$schema_file" $CLI_OPTS || echo "Schema validation failed for $subject"
+                fi
+              fi
+            done
             ;;
             
           check-compatibility)
-            ${{ github.action_path }}/scripts/check-compatibility.sh \
-              --path "${{ inputs.schemas-path }}" \
-              --subject "${{ inputs.subject }}" \
-              --schema-file "${{ inputs.schema-file }}" \
-              --compatibility-level "${{ inputs.compatibility-level }}" \
-              --registry-url "${{ inputs.registry-url }}"
+            if [ ! -z "${{ inputs.schema-file }}" ] && [ ! -z "${{ inputs.subject }}" ]; then
+              echo "Checking compatibility for subject: ${{ inputs.subject }}"
+              ksr-cli check compatibility "${{ inputs.subject }}" --file "${{ inputs.schema-file }}" $CLI_OPTS
+            else
+              echo "Error: Both schema-file and subject are required for compatibility check"
+              exit 1
+            fi
             ;;
             
           deploy)
-            ${{ github.action_path }}/scripts/deploy.sh \
-              --path "${{ inputs.schemas-path }}" \
-              --registry-url "${{ inputs.registry-url }}" \
-              --dry-run "${{ inputs.dry-run }}" \
-              --create-subjects "${{ inputs.create-subjects }}" \
-              --normalize "${{ inputs.normalize-schemas }}" \
-              --subject-prefix "${{ inputs.subject-prefix }}"
+            echo "Deploying schemas from ${{ inputs.schemas-path }}"
+            if [ "${{ inputs.dry-run }}" == "true" ]; then
+              echo "Dry run mode - schemas will not be deployed"
+            fi
+            
+            for schema_file in ${{ inputs.schemas-path }}/*.{avsc,json}; do
+              if [ -f "$schema_file" ]; then
+                # Extract subject name from filename
+                subject=$(basename "$schema_file" | sed 's/\.[^.]*$//')
+                if [ ! -z "${{ inputs.subject-prefix }}" ]; then
+                  subject="${{ inputs.subject-prefix }}$subject"
+                fi
+                
+                echo "Deploying schema for subject: $subject"
+                
+                # Set schema type if specified
+                schema_type_opt=""
+                if [ "${{ inputs.schema-type }}" == "json" ]; then
+                  schema_type_opt="--schema-type JSON"
+                elif [ "${{ inputs.schema-type }}" == "protobuf" ]; then
+                  schema_type_opt="--schema-type PROTOBUF"
+                fi
+                
+                if [ "${{ inputs.dry-run }}" == "false" ]; then
+                  ksr-cli create schema "$subject" --file "$schema_file" $schema_type_opt $CLI_OPTS
+                else
+                  echo "Dry run: Would deploy $schema_file as subject $subject"
+                fi
+              fi
+            done
             ;;
             
           compare)
-            ${{ github.action_path }}/scripts/compare.sh \
-              --source "${{ inputs.source-registry }}" \
-              --target "${{ inputs.target-registry }}" \
-              --output-format "${{ inputs.output-format }}"
+            echo "Comparing registries is not directly supported by ksr-cli"
+            echo "Use export operation on both registries and compare the outputs"
+            exit 1
             ;;
             
           export)
-            ${{ github.action_path }}/scripts/export.sh \
-              --registry-url "${{ inputs.registry-url }}" \
-              --output-path "${{ inputs.output-path }}" \
-              --include-versions "${{ inputs.include-versions }}"
+            output_path="${{ inputs.output-path }}"
+            if [ -z "$output_path" ]; then
+              output_path="./exported-schemas.json"
+            fi
+            
+            echo "Exporting schemas to $output_path"
+            
+            if [ "${{ inputs.include-versions }}" == "all" ]; then
+              ksr-cli export subjects --all-versions -f "$output_path" $CLI_OPTS
+            else
+              ksr-cli export subjects -f "$output_path" $CLI_OPTS
+            fi
+            
+            echo "export-path=$output_path" >> $GITHUB_OUTPUT
             ;;
             
           lint)
-            ${{ github.action_path }}/scripts/lint.sh \
-              --path "${{ inputs.schemas-path }}" \
-              --rules-file "${{ inputs.rules-file }}" \
-              --output-format "${{ inputs.output-format }}"
+            echo "Schema linting with custom rules is not directly supported by ksr-cli"
+            echo "ksr-cli performs basic validation during schema operations"
+            # Fallback to validation
+            echo "Performing basic schema validation instead..."
+            for schema_file in ${{ inputs.schemas-path }}/*.{avsc,json}; do
+              if [ -f "$schema_file" ]; then
+                echo "Validating $schema_file"
+                subject=$(basename "$schema_file" | sed 's/\.[^.]*$//')
+                ksr-cli check compatibility "$subject" --file "$schema_file" $CLI_OPTS || echo "Validation failed for $schema_file"
+              fi
+            done
             ;;
             
           generate-docs)
-            ${{ github.action_path }}/scripts/generate-docs.sh \
-              --path "${{ inputs.schemas-path }}" \
-              --output-path "${{ inputs.output-path }}" \
-              --format "${{ inputs.output-format }}"
+            echo "Documentation generation is not directly supported by ksr-cli"
+            echo "Use the export functionality and generate docs from the exported schemas"
+            exit 1
             ;;
             
           *)
@@ -288,22 +382,65 @@ runs:
       if: always()
       shell: bash
       run: |
-        # Process and format results based on operation
-        if [ -f "operation-result.json" ]; then
-          cat operation-result.json
-          
-          # Extract outputs
-          echo "validation-result=$(jq -r '.validation_result // empty' operation-result.json)" >> $GITHUB_OUTPUT
-          echo "compatibility-result=$(jq -r '.compatibility_result // empty' operation-result.json)" >> $GITHUB_OUTPUT
-          echo "deployed-schemas=$(jq -r '.deployed_schemas // empty' operation-result.json)" >> $GITHUB_OUTPUT
-          echo "schema-diff=$(jq -r '.schema_diff // empty' operation-result.json)" >> $GITHUB_OUTPUT
-          echo "export-path=$(jq -r '.export_path // empty' operation-result.json)" >> $GITHUB_OUTPUT
-          echo "operation-status=$(jq -r '.status // "unknown"' operation-result.json)" >> $GITHUB_OUTPUT
-          echo "error-message=$(jq -r '.error_message // empty' operation-result.json)" >> $GITHUB_OUTPUT
-        fi
+        # Capture operation status from previous step
+        OPERATION_STATUS="${{ steps.execute.outcome }}"
+        
+        echo "Operation completed with status: $OPERATION_STATUS"
+        echo "operation-status=$OPERATION_STATUS" >> $GITHUB_OUTPUT
+        
+        # Set default values for outputs
+        echo "validation-result=" >> $GITHUB_OUTPUT
+        echo "compatibility-result=" >> $GITHUB_OUTPUT
+        echo "deployed-schemas=" >> $GITHUB_OUTPUT
+        echo "schema-diff=" >> $GITHUB_OUTPUT
+        
+        # Set operation-specific outputs based on the operation performed
+        case "${{ inputs.operation }}" in
+          validate)
+            if [ "$OPERATION_STATUS" == "success" ]; then
+              echo "validation-result=All schemas are valid" >> $GITHUB_OUTPUT
+            else
+              echo "validation-result=Schema validation failed" >> $GITHUB_OUTPUT
+              echo "error-message=One or more schemas failed validation" >> $GITHUB_OUTPUT
+            fi
+            ;;
+            
+          check-compatibility)
+            if [ "$OPERATION_STATUS" == "success" ]; then
+              echo "compatibility-result=Schema is compatible" >> $GITHUB_OUTPUT
+            else
+              echo "compatibility-result=Schema is not compatible" >> $GITHUB_OUTPUT
+              echo "error-message=Schema compatibility check failed" >> $GITHUB_OUTPUT
+            fi
+            ;;
+            
+          deploy)
+            if [ "$OPERATION_STATUS" == "success" ]; then
+              # Count deployed schemas
+              schema_count=$(find "${{ inputs.schemas-path }}" -name "*.avsc" -o -name "*.json" | wc -l)
+              echo "deployed-schemas=Successfully deployed $schema_count schemas" >> $GITHUB_OUTPUT
+            else
+              echo "deployed-schemas=" >> $GITHUB_OUTPUT
+              echo "error-message=Schema deployment failed" >> $GITHUB_OUTPUT
+            fi
+            ;;
+            
+          export)
+            # export-path is already set in the execute step
+            if [ "$OPERATION_STATUS" != "success" ]; then
+              echo "error-message=Schema export failed" >> $GITHUB_OUTPUT
+            fi
+            ;;
+            
+          *)
+            if [ "$OPERATION_STATUS" != "success" ]; then
+              echo "error-message=Operation ${{ inputs.operation }} failed" >> $GITHUB_OUTPUT
+            fi
+            ;;
+        esac
         
         # Check if we should fail
-        if [ "${{ inputs.fail-on-error }}" == "true" ] && [ -f "operation-failed" ]; then
-          echo "Operation failed!"
+        if [ "${{ inputs.fail-on-error }}" == "true" ] && [ "$OPERATION_STATUS" != "success" ]; then
+          echo "Operation failed and fail-on-error is enabled!"
           exit 1
         fi

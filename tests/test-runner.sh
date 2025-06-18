@@ -1,11 +1,12 @@
 #!/bin/bash
 set -e
 
-# Test runner for schema registry scripts
-# Usage: ./test-runner.sh [--verbose] [--script=<script_name>]
+# Test runner for ksr-cli GitHub Action
+# Usage: ./test-runner.sh [--verbose] [--test-type=<type>] [--iterations=<num>]
 
 VERBOSE=false
-SPECIFIC_SCRIPT=""
+SPECIFIC_TEST=""
+ITERATIONS=5
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMP_DIR="$(mktemp -d)"
@@ -17,12 +18,17 @@ while [[ $# -gt 0 ]]; do
       VERBOSE=true
       shift
       ;;
-    --script=*)
-      SPECIFIC_SCRIPT="${1#*=}"
+    --test-type=*)
+      SPECIFIC_TEST="${1#*=}"
+      shift
+      ;;
+    --iterations=*)
+      ITERATIONS="${1#*=}"
       shift
       ;;
     *)
       echo "Unknown option: $1"
+      echo "Usage: $0 [--verbose] [--test-type=unit|performance|all] [--iterations=<num>]"
       exit 1
       ;;
   esac
@@ -36,10 +42,10 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Test results
-TOTAL_TESTS=0
-PASSED_TESTS=0
-FAILED_TESTS=0
-FAILED_TEST_NAMES=()
+TOTAL_TEST_SUITES=0
+PASSED_TEST_SUITES=0
+FAILED_TEST_SUITES=0
+FAILED_SUITE_NAMES=()
 
 # Logging functions
 log_info() {
@@ -71,478 +77,285 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Test framework functions
+# Test execution functions
+run_test_suite() {
+  local test_script="$1"
+  local test_name="$2"
+  local test_args="${3:-}"
+  
+  TOTAL_TEST_SUITES=$((TOTAL_TEST_SUITES + 1))
+  
+  log_info "Running $test_name..."
+  echo "========================================"
+  
+  local start_time=$(date +%s)
+  
+  if [ "$VERBOSE" = true ]; then
+    if bash "$test_script" --verbose $test_args; then
+      local exit_code=0
+    else
+      local exit_code=$?
+    fi
+  else
+    if bash "$test_script" $test_args 2>&1 | tee "$TEMP_DIR/${test_name}.log"; then
+      local exit_code=0
+    else
+      local exit_code=$?
+    fi
+  fi
+  
+  local end_time=$(date +%s)
+  local duration=$((end_time - start_time))
+  
+  if [ $exit_code -eq 0 ]; then
+    PASSED_TEST_SUITES=$((PASSED_TEST_SUITES + 1))
+    log_success "$test_name completed successfully (${duration}s)"
+  else
+    FAILED_TEST_SUITES=$((FAILED_TEST_SUITES + 1))
+    FAILED_SUITE_NAMES+=("$test_name")
+    log_error "$test_name failed (${duration}s)"
+    
+    if [ "$VERBOSE" = false ] && [ -f "$TEMP_DIR/${test_name}.log" ]; then
+      echo "Last 20 lines of output:"
+      tail -20 "$TEMP_DIR/${test_name}.log" | sed 's/^/  /'
+    fi
+  fi
+  
+  echo
+}
+
+# System requirements check
+check_system_requirements() {
+  log_info "Checking system requirements..."
+  
+  local missing_tools=()
+  
+  # Check for required tools
+  if ! command -v curl >/dev/null 2>&1; then
+    missing_tools+=("curl")
+  fi
+  
+  if ! command -v wget >/dev/null 2>&1; then
+    missing_tools+=("wget")
+  fi
+  
+  if ! command -v python3 >/dev/null 2>&1; then
+    missing_tools+=("python3")
+  fi
+  
+  if ! command -v jq >/dev/null 2>&1; then
+    missing_tools+=("jq")
+  fi
+  
+  if ! command -v tar >/dev/null 2>&1; then
+    missing_tools+=("tar")
+  fi
+  
+  if [ ${#missing_tools[@]} -gt 0 ]; then
+    log_error "Missing required tools: ${missing_tools[*]}"
+    log_info "Please install the missing tools and try again"
+    exit 1
+  fi
+  
+  # Check Python modules
+  if ! python3 -c "import yaml" 2>/dev/null; then
+    log_warning "PyYAML not installed - some tests may be skipped"
+  fi
+  
+  if ! python3 -c "import http.server" 2>/dev/null; then
+    log_warning "Python http.server not available - mock server tests may be skipped"
+  fi
+  
+  log_success "System requirements check passed"
+}
+
+# Environment setup
 setup_test_environment() {
-  log_info "Setting up test environment"
+  log_info "Setting up test environment..."
   
   # Create test directories
-  mkdir -p "$TEMP_DIR/schemas"
-  mkdir -p "$TEMP_DIR/output"
-  mkdir -p "$TEMP_DIR/docs"
+  mkdir -p "$TEMP_DIR/test-results"
+  mkdir -p "$TEMP_DIR/test-logs"
   
-  # Create test schemas
-  cat > "$TEMP_DIR/schemas/user.avsc" << 'EOF'
+  # Set environment variables for tests
+  export TEST_TEMP_DIR="$TEMP_DIR"
+  export TEST_VERBOSE="$VERBOSE"
+  
+  # Create basic test schema for shared use
+  mkdir -p "$TEMP_DIR/shared-schemas"
+  
+  cat > "$TEMP_DIR/shared-schemas/test-user.avsc" << 'EOF'
 {
   "type": "record",
   "name": "User",
-  "namespace": "com.example",
-  "doc": "A user record",
+  "namespace": "com.test",
+  "doc": "A test user record",
   "fields": [
-    {
-      "name": "id",
-      "type": "string",
-      "doc": "User ID"
-    },
-    {
-      "name": "name",
-      "type": "string",
-      "doc": "User name"
-    },
-    {
-      "name": "email",
-      "type": ["null", "string"],
-      "default": null,
-      "doc": "User email"
-    }
+    {"name": "id", "type": "string", "doc": "User ID"},
+    {"name": "name", "type": "string", "doc": "User name"},
+    {"name": "email", "type": ["null", "string"], "default": null, "doc": "User email"}
   ]
 }
 EOF
-  
-  cat > "$TEMP_DIR/schemas/product.avsc" << 'EOF'
+
+  cat > "$TEMP_DIR/shared-schemas/test-product.avsc" << 'EOF'
 {
   "type": "record",
   "name": "Product",
-  "namespace": "com.example",
-  "doc": "A product record",
+  "namespace": "com.test",
+  "doc": "A test product record",
   "fields": [
-    {
-      "name": "id",
-      "type": "string",
-      "doc": "Product ID"
-    },
-    {
-      "name": "name",
-      "type": "string",
-      "doc": "Product name"
-    },
-    {
-      "name": "price",
-      "type": "double",
-      "doc": "Product price"
-    }
+    {"name": "id", "type": "string", "doc": "Product ID"},
+    {"name": "name", "type": "string", "doc": "Product name"},
+    {"name": "price", "type": "double", "doc": "Product price"},
+    {"name": "category", "type": "string", "doc": "Product category"}
   ]
 }
 EOF
-
-  cat > "$TEMP_DIR/schemas/invalid.avsc" << 'EOF'
-{
-  "type": "record",
-  "name": "Invalid",
-  "fields": [
-    {
-      "name": "missing_type"
-    }
-  ]
-}
-EOF
-
-  # Create test protobuf schema
-  cat > "$TEMP_DIR/schemas/message.proto" << 'EOF'
-syntax = "proto3";
-
-package com.example;
-
-message TestMessage {
-  string id = 1;
-  string content = 2;
-  int64 timestamp = 3;
-}
-EOF
-
-  # Create test JSON schema
-  cat > "$TEMP_DIR/schemas/event.json" << 'EOF'
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Event",
-  "type": "object",
-  "properties": {
-    "id": {
-      "type": "string"
-    },
-    "type": {
-      "type": "string"
-    },
-    "timestamp": {
-      "type": "integer"
-    }
-  },
-  "required": ["id", "type"]
-}
-EOF
-
-  # Create test rules file
-  cat > "$TEMP_DIR/lint-rules.sh" << 'EOF'
-# Custom linting rules
-DEFAULT_AVRO_RULES["namespace_required"]="true"
-DEFAULT_AVRO_RULES["doc_required"]="true"
-DEFAULT_AVRO_RULES["field_doc_required"]="true"
-EOF
-
+  
   log_success "Test environment setup complete"
 }
 
-# Mock HTTP server for testing
-start_mock_server() {
-  log_info "Starting mock Schema Registry server"
+# Action validation
+validate_action_yml() {
+  log_info "Validating action.yml configuration..."
   
-  # Create mock server responses
-  cat > "$TEMP_DIR/mock_responses.py" << 'EOF'
-#!/usr/bin/env python3
-import json
-import http.server
-import socketserver
-from urllib.parse import urlparse, parse_qs
-
-class MockSchemaRegistryHandler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        path = self.path
-        
-        if path == '/subjects':
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            response = json.dumps(["com.example.User-value", "com.example.Product-value"])
-            self.wfile.write(response.encode())
-        elif '/subjects/' in path and '/versions' in path:
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            response = json.dumps([1, 2])
-            self.wfile.write(response.encode())
-        elif '/subjects/' in path and '/versions/' in path:
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            response = json.dumps({
-                "id": 1,
-                "version": 1,
-                "schema": "{\"type\": \"record\", \"name\": \"User\", \"fields\": [{\"name\": \"id\", \"type\": \"string\"}]}",
-                "schemaType": "AVRO"
-            })
-            self.wfile.write(response.encode())
-        else:
-            self.send_response(404)
-            self.end_headers()
-    
-    def do_POST(self):
-        path = self.path
-        content_length = int(self.headers['Content-Length'])
-        post_data = self.rfile.read(content_length)
-        
-        if '/compatibility/' in path:
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            response = json.dumps({"is_compatible": True})
-            self.wfile.write(response.encode())
-        elif '/subjects/' in path and '/versions' in path:
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            response = json.dumps({"id": 1})
-            self.wfile.write(response.encode())
-        else:
-            self.send_response(404)
-            self.end_headers()
-    
-    def log_message(self, format, *args):
-        pass  # Silence server logs
-
-if __name__ == "__main__":
-    PORT = 8081
-    Handler = MockSchemaRegistryHandler
-    with socketserver.TCPServer(("", PORT), Handler) as httpd:
-        httpd.serve_forever()
-EOF
-
-  # Start mock server in background
-  python3 "$TEMP_DIR/mock_responses.py" &
-  MOCK_SERVER_PID=$!
-  sleep 2  # Give server time to start
-  
-  # Store PID for cleanup
-  echo $MOCK_SERVER_PID > "$TEMP_DIR/mock_server.pid"
-  
-  log_success "Mock server started on port 8081"
-}
-
-stop_mock_server() {
-  if [ -f "$TEMP_DIR/mock_server.pid" ]; then
-    local pid=$(cat "$TEMP_DIR/mock_server.pid")
-    kill $pid 2>/dev/null || true
-    log_info "Mock server stopped"
+  if [ ! -f "$SCRIPT_DIR/action.yml" ]; then
+    log_error "action.yml not found in $SCRIPT_DIR"
+    return 1
   fi
-}
-
-# Test execution function
-run_test() {
-  local test_name="$1"
-  local test_command="$2"
-  local expected_exit_code="${3:-0}"
   
-  TOTAL_TESTS=$((TOTAL_TESTS + 1))
-  
-  log_verbose "Running test: $test_name"
-  
-  # Execute test command
-  if eval "$test_command" > "$TEMP_DIR/test_output.log" 2>&1; then
-    actual_exit_code=0
+  # Check if action.yml is valid YAML
+  if python3 -c "
+import yaml
+import sys
+try:
+    with open('$SCRIPT_DIR/action.yml', 'r') as f:
+        yaml.safe_load(f)
+    print('✓ action.yml is valid YAML')
+except Exception as e:
+    print(f'✗ action.yml is invalid: {e}')
+    sys.exit(1)
+" 2>/dev/null; then
+    log_success "action.yml validation passed"
   else
-    actual_exit_code=$?
+    log_error "action.yml validation failed"
+    return 1
   fi
   
-  # Check exit code
-  if [ "$actual_exit_code" -eq "$expected_exit_code" ]; then
-    PASSED_TESTS=$((PASSED_TESTS + 1))
-    log_success "$test_name"
-    log_verbose "Command: $test_command"
-    if [ "$VERBOSE" = true ]; then
-      cat "$TEMP_DIR/test_output.log" | head -10
-    fi
+  # Check for required fields
+  if grep -q "ksr-cli" "$SCRIPT_DIR/action.yml"; then
+    log_success "action.yml contains ksr-cli references"
   else
-    FAILED_TESTS=$((FAILED_TESTS + 1))
-    FAILED_TEST_NAMES+=("$test_name")
-    log_error "$test_name (exit code: $actual_exit_code, expected: $expected_exit_code)"
-    log_verbose "Command: $test_command"
-    if [ "$VERBOSE" = true ]; then
-      cat "$TEMP_DIR/test_output.log"
-    fi
+    log_warning "action.yml does not contain ksr-cli references"
   fi
-}
-
-# Test functions for each script
-test_validate_script() {
-  log_info "Testing validate.sh"
-  
-  # Create a separate directory with only valid schemas for the first test
-  mkdir -p "$TEMP_DIR/valid_schemas"
-  cp "$TEMP_DIR/schemas/user.avsc" "$TEMP_DIR/valid_schemas/"
-  cp "$TEMP_DIR/schemas/product.avsc" "$TEMP_DIR/valid_schemas/"
-  
-  # Test 1: Valid AVRO schemas
-  run_test "validate.sh - Valid AVRO schemas" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/validate.sh' --path valid_schemas --type avro --output-format json" \
-    0
-  
-  # Test 2: Invalid schema should fail
-  run_test "validate.sh - Invalid schema detection" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/validate.sh' --path schemas --type avro --output-format json" \
-    1
-  
-  # Test 3: Protobuf validation
-  run_test "validate.sh - Protobuf validation" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/validate.sh' --path schemas --type protobuf --output-format json" \
-    0
-  
-  # Test 4: JSON schema validation
-  run_test "validate.sh - JSON schema validation" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/validate.sh' --path schemas --type json --output-format json" \
-    0
-  
-  # Test 5: Non-existent path
-  run_test "validate.sh - Non-existent path" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/validate.sh' --path nonexistent --type avro --output-format json" \
-    1
-}
-
-test_lint_script() {
-  log_info "Testing lint.sh"
-  
-  # Test 1: Basic linting
-  run_test "lint.sh - Basic linting" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/lint.sh' --path schemas --output-format json" \
-    0
-  
-  # Test 2: Custom rules
-  run_test "lint.sh - Custom rules" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/lint.sh' --path schemas --rules-file lint-rules.sh --output-format json" \
-    0
-  
-  # Test 3: Strict mode
-  run_test "lint.sh - Strict mode" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/lint.sh' --path schemas --strict true --output-format json" \
-    0
-}
-
-test_generate_docs_script() {
-  log_info "Testing generate-docs.sh"
-  
-  # Test 1: Markdown documentation
-  run_test "generate-docs.sh - Markdown format" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/generate-docs.sh' --path schemas --output-path docs --format markdown" \
-    0
-  
-  # Test 2: HTML documentation
-  run_test "generate-docs.sh - HTML format" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/generate-docs.sh' --path schemas --output-path docs --format html" \
-    0
-  
-  # Test 3: JSON documentation
-  run_test "generate-docs.sh - JSON format" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/generate-docs.sh' --path schemas --output-path docs --format json" \
-    0
-}
-
-test_check_compatibility_script() {
-  log_info "Testing check-compatibility.sh"
-  
-  # Test 1: Single schema compatibility
-  run_test "check-compatibility.sh - Single schema" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/check-compatibility.sh' --schema-file schemas/user.avsc --subject com.example.User-value --registry-url http://localhost:8081" \
-    0
-  
-  # Test 2: Path-based compatibility
-  run_test "check-compatibility.sh - Path-based" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/check-compatibility.sh' --path schemas --registry-url http://localhost:8081" \
-    0
-  
-  # Test 3: Missing registry URL
-  run_test "check-compatibility.sh - Missing registry URL" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/check-compatibility.sh' --path schemas" \
-    1
-}
-
-test_deploy_script() {
-  log_info "Testing deploy.sh"
-  
-  # Test 1: Dry run deployment
-  run_test "deploy.sh - Dry run" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/deploy.sh' --path schemas --registry-url http://localhost:8081 --dry-run true" \
-    0
-  
-  # Test 2: Actual deployment
-  run_test "deploy.sh - Actual deployment" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/deploy.sh' --path schemas --registry-url http://localhost:8081 --dry-run false" \
-    0
-  
-  # Test 3: With subject prefix
-  run_test "deploy.sh - With subject prefix" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/deploy.sh' --path schemas --registry-url http://localhost:8081 --subject-prefix test. --dry-run true" \
-    0
-}
-
-test_export_script() {
-  log_info "Testing export.sh"
-  
-  # Test 1: Export schemas
-  run_test "export.sh - Export schemas" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/export.sh' --registry-url http://localhost:8081 --output-path output" \
-    0
-  
-  # Test 2: Export with specific versions
-  run_test "export.sh - Export specific versions" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/export.sh' --registry-url http://localhost:8081 --output-path output --include-versions all" \
-    0
-  
-  # Test 3: Missing registry URL
-  run_test "export.sh - Missing registry URL" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/export.sh' --output-path output" \
-    1
-}
-
-test_compare_script() {
-  log_info "Testing compare.sh"
-  
-  # Test 1: Compare registries
-  run_test "compare.sh - Compare registries" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/compare.sh' --source http://localhost:8081 --target http://localhost:8081" \
-    0
-  
-  # Test 2: Missing source registry
-  run_test "compare.sh - Missing source registry" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/compare.sh' --target http://localhost:8081" \
-    1
-  
-  # Test 3: Missing target registry
-  run_test "compare.sh - Missing target registry" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/compare.sh' --source http://localhost:8081" \
-    1
 }
 
 # Main test execution
 main() {
-  log_info "Starting Schema Registry Scripts Test Suite"
-  log_info "Test directory: $TEST_DIR"
-  log_info "Script directory: $SCRIPT_DIR"
-  log_info "Temp directory: $TEMP_DIR"
+  echo "========================================"
+  echo "       ksr-cli GitHub Action Tests      "
+  echo "========================================"
+  echo "Test directory: $TEMP_DIR"
+  echo "Verbose mode: $VERBOSE"
+  echo "Test type: ${SPECIFIC_TEST:-all}"
+  echo "Performance iterations: $ITERATIONS"
+  echo "========================================"
+  echo
   
-  # Setup
+  # System checks
+  check_system_requirements
   setup_test_environment
-  start_mock_server
+  validate_action_yml
   
-  # Run tests
-  if [ -z "$SPECIFIC_SCRIPT" ]; then
-    test_validate_script
-    test_lint_script
-    test_generate_docs_script
-    test_check_compatibility_script
-    test_deploy_script
-    test_export_script
-    test_compare_script
+  echo
+  log_info "Starting test execution..."
+  
+  # Run tests based on specified type
+  case "${SPECIFIC_TEST:-all}" in
+    unit)
+      run_test_suite "$TEST_DIR/unit-tests.sh" "Unit Tests"
+      ;;
+    performance)
+      run_test_suite "$TEST_DIR/performance-tests.sh" "Performance Tests" "--iterations=$ITERATIONS"
+      ;;
+    all)
+      # Run unit tests first
+      run_test_suite "$TEST_DIR/unit-tests.sh" "Unit Tests"
+      
+      # Run performance tests with reduced iterations for faster execution
+      local perf_iterations=$((ITERATIONS < 5 ? ITERATIONS : 5))
+      run_test_suite "$TEST_DIR/performance-tests.sh" "Performance Tests" "--iterations=$perf_iterations"
+      ;;
+    *)
+      log_error "Unknown test type: $SPECIFIC_TEST"
+      echo "Valid test types: unit, performance, all"
+      exit 1
+      ;;
+  esac
+  
+  # Print final results
+  echo
+  echo "========================================"
+  log_info "Test Execution Summary"
+  echo "========================================"
+  
+  echo "Total test suites: $TOTAL_TEST_SUITES"
+  echo "Passed: $PASSED_TEST_SUITES"
+  echo "Failed: $FAILED_TEST_SUITES"
+  
+  if [ $FAILED_TEST_SUITES -eq 0 ]; then
+    echo
+    log_success "All test suites passed! 🎉"
+    
+    # Show performance summary if performance tests were run
+    if [[ "${SPECIFIC_TEST:-all}" == "performance" || "${SPECIFIC_TEST:-all}" == "all" ]]; then
+      echo
+      log_info "Performance test results can be found in the output above"
+      log_info "Consider running with --iterations=10 for more accurate performance metrics"
+    fi
   else
-    case "$SPECIFIC_SCRIPT" in
-      validate)
-        test_validate_script
-        ;;
-      lint)
-        test_lint_script
-        ;;
-      generate-docs)
-        test_generate_docs_script
-        ;;
-      check-compatibility)
-        test_check_compatibility_script
-        ;;
-      deploy)
-        test_deploy_script
-        ;;
-      export)
-        test_export_script
-        ;;
-      compare)
-        test_compare_script
-        ;;
-      *)
-        log_error "Unknown script: $SPECIFIC_SCRIPT"
-        exit 1
-        ;;
-    esac
+    echo
+    log_error "Some test suites failed:"
+    for suite in "${FAILED_SUITE_NAMES[@]}"; do
+      echo "  ✗ $suite"
+    done
+    echo
+    log_info "Check the detailed output above for error information"
+    log_info "Run with --verbose for more detailed output"
+    exit 1
   fi
   
-  # Cleanup
-  stop_mock_server
-  
-  # Results
-  echo
-  log_info "Test Results Summary"
-  echo "=================="
-  echo "Total Tests: $TOTAL_TESTS"
-  echo "Passed: $PASSED_TESTS"
-  echo "Failed: $FAILED_TESTS"
-  
-  if [ $FAILED_TESTS -gt 0 ]; then
+  # Cleanup information
+  if [ "$VERBOSE" = true ]; then
     echo
-    log_error "Failed Tests:"
-    for test in "${FAILED_TEST_NAMES[@]}"; do
-      echo "  - $test"
-    done
-    exit 1
-  else
-    echo
-    log_success "All tests passed!"
-    exit 0
+    log_info "Test artifacts saved in: $TEMP_DIR"
+    log_info "Run 'rm -rf $TEMP_DIR' to clean up manually"
   fi
 }
+
+# Show usage information
+show_usage() {
+  echo "Usage: $0 [options]"
+  echo
+  echo "Options:"
+  echo "  --verbose              Enable verbose output"
+  echo "  --test-type=TYPE       Run specific test type (unit|performance|all)"
+  echo "  --iterations=NUM       Number of iterations for performance tests (default: 5)"
+  echo
+  echo "Examples:"
+  echo "  $0                     # Run all tests"
+  echo "  $0 --verbose           # Run all tests with verbose output"
+  echo "  $0 --test-type=unit    # Run only unit tests"
+  echo "  $0 --test-type=performance --iterations=10  # Run performance tests with 10 iterations"
+  echo
+}
+
+# Handle help flag
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  show_usage
+  exit 0
+fi
 
 # Run main function
 main "$@" 

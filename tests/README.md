@@ -1,382 +1,284 @@
-# Schema Registry Scripts Testing Framework
+# ksr-cli GitHub Action Tests
 
-This directory contains a comprehensive testing framework for the Schema Registry scripts. The framework includes unit tests, integration tests, performance tests, and CI/CD integration.
-
-## Overview
-
-The testing framework provides several types of tests:
-
-- **Unit Tests**: Test individual functions and components
-- **Integration Tests**: Test complete script workflows with mock data
-- **Performance Tests**: Measure execution time and resource usage
-- **CI/CD Tests**: Automated testing in continuous integration
+This directory contains comprehensive tests for the ksr-cli GitHub Action. The tests are designed to validate the action's functionality, performance, and integration with the ksr-cli tool.
 
 ## Test Structure
 
-```
-tests/
-├── README.md                  # This file
-├── test-framework.sh          # Common testing utilities
-├── test-runner.sh             # Main integration test runner
-├── unit-tests.sh              # Unit test suite
-├── performance-tests.sh       # Performance test suite
-└── ci-tests.yml              # CI/CD configuration
-```
+### 📁 Test Files
 
-## Quick Start
+- **`test-runner.sh`** - Main test orchestrator that runs all test suites
+- **`unit-tests.sh`** - Unit tests for ksr-cli integration and GitHub Action functionality
+- **`performance-tests.sh`** - Performance benchmarks for ksr-cli operations
+- **`test-framework.sh`** - Shared testing utilities and helper functions
 
-### Prerequisites
+### 🧪 Test Types
 
-Ensure you have the following tools installed:
-
-```bash
-# Required tools
-sudo apt-get install jq bc curl python3
-
-# Optional tools for enhanced testing
-pip install jsonschema
-wget -O /usr/local/bin/memusg https://raw.githubusercontent.com/jhclark/memusg/master/memusg
-chmod +x /usr/local/bin/memusg
-```
-
-### Running Tests
-
-#### Run All Tests
-```bash
-cd tests
-./test-runner.sh
-```
-
-#### Run Tests with Verbose Output
-```bash
-./test-runner.sh --verbose
-```
-
-#### Run Tests for Specific Script
-```bash
-./test-runner.sh --script=validate
-./test-runner.sh --script=lint
-./test-runner.sh --script=deploy
-```
-
-#### Run Unit Tests
-```bash
-./unit-tests.sh
-./unit-tests.sh --verbose
-./unit-tests.sh --function=validate-avro
-```
-
-#### Run Performance Tests
-```bash
-./performance-tests.sh
-./performance-tests.sh --iterations=20
-./performance-tests.sh --verbose
-```
-
-## Test Categories
-
-### 1. Integration Tests (`test-runner.sh`)
-
-These tests verify that the scripts work correctly with realistic data and scenarios.
-
-**Features:**
-- Mock Schema Registry server
-- Test data generation
-- End-to-end workflow testing
-- Error condition testing
+#### Unit Tests
+- GitHub Action configuration validation
+- ksr-cli installation and setup
+- Environment detection and setup
+- Basic CLI operations (version, help)
+- Schema validation with mock registry
 - Output format validation
+- Error handling and edge cases
 
-**Test Coverage:**
-- `validate.sh`: Schema validation with different formats
-- `lint.sh`: Schema linting with custom rules
-- `generate-docs.sh`: Documentation generation
-- `check-compatibility.sh`: Compatibility checking
-- `deploy.sh`: Schema deployment (dry-run and actual)
-- `export.sh`: Schema export from registry
-- `compare.sh`: Registry comparison
+#### Performance Tests
+- ksr-cli startup time
+- Schema validation performance (small, medium, large schemas)
+- Schema export performance
+- Bulk operations (multiple schemas)
+- Memory usage monitoring
+- GitHub Action execution time
 
-### 2. Unit Tests (`unit-tests.sh`)
+## 🚀 Running Tests
 
-These tests focus on individual functions and components within the scripts.
-
-**Features:**
-- Function-level testing
-- Mock external dependencies
-- Edge case testing
-- Error handling validation
-
-**Test Coverage:**
-- AVRO schema validation functions
-- Protobuf schema validation functions
-- JSON schema validation functions
-- Subject extraction functions
-- Compatibility checking functions
-- Documentation generation functions
-- Argument parsing validation
-
-### 3. Performance Tests (`performance-tests.sh`)
-
-These tests measure execution time, memory usage, and scalability.
-
-**Features:**
-- Execution time measurement
-- Memory usage tracking
-- Scalability testing
-- Concurrent execution testing
-- Load testing with large datasets
-
-**Test Coverage:**
-- Performance with different schema counts
-- Complex schema handling
-- Network operation performance
-- Concurrent execution safety
-- Memory usage patterns
-
-## Test Framework Components
-
-### Core Functions
-
-The `test-framework.sh` provides these key functions:
-
+### Quick Start
 ```bash
-# Test organization
-test_suite "Suite Name"
-test_case "Test Name" "command" expected_exit_code
+# Run all tests
+./test-runner.sh
 
-# Assertions
-assert_equals "actual" "expected"
-assert_contains "text" "substring"
-assert_file_exists "filepath"
-assert_json_valid "json_file"
-
-# Utilities
-generate_test_avro_schema "name" "namespace"
-start_test_http_server port
-mock_curl url method
-```
-
-### Mock Services
-
-The framework includes mock services for testing:
-
-- **Mock Schema Registry**: Simulates Confluent Schema Registry API
-- **HTTP Server**: Generic HTTP server for testing
-- **Mock Functions**: Replacements for external dependencies
-
-### Test Data Generation
-
-The framework can generate various test data:
-
-```bash
-# Generate AVRO schemas
-create_test_avro_schema "filename" true|false
-
-# Generate Protobuf schemas  
-create_test_protobuf_schema "filename" true|false
-
-# Generate JSON schemas
-create_test_json_schema "filename" true|false
-
-# Generate large datasets
-create_large_schema_set 100
-```
-
-## Writing New Tests
-
-### Adding Integration Tests
-
-1. Add a new test function to `test-runner.sh`:
-
-```bash
-test_new_script() {
-  log_info "Testing new-script.sh"
-  
-  run_test "new-script.sh - Basic functionality" \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/new-script.sh' --arg value" \
-    0
-}
-```
-
-2. Call the function in the main execution:
-
-```bash
-test_new_script
-```
-
-### Adding Unit Tests
-
-1. Add a new test function to `unit-tests.sh`:
-
-```bash
-test_new_function() {
-  test_suite "new-script.sh - Function tests"
-  
-  source "$SCRIPT_DIR/scripts/new-script.sh" 2>/dev/null || true
-  
-  test_case "Function works correctly" \
-    'new_function "input" | grep -q "expected"' \
-    0
-}
-```
-
-### Adding Performance Tests
-
-1. Add a new test function to `performance-tests.sh`:
-
-```bash
-test_new_script_performance() {
-  test_suite "new-script.sh - Performance Tests"
-  
-  measure_execution_time \
-    "cd '$TEMP_DIR' && '$SCRIPT_DIR/scripts/new-script.sh' --path data" \
-    "new-script.sh with test data"
-}
-```
-
-## CI/CD Integration
-
-The framework includes GitHub Actions configuration (`ci-tests.yml`) that runs:
-
-- Unit tests on multiple platforms
-- Integration tests with different script combinations
-- Performance tests with limited iterations
-- Security scanning with ShellCheck
-- Documentation validation
-
-### Local CI Testing
-
-You can run the same tests locally:
-
-```bash
-# Install dependencies
-sudo apt-get install jq bc curl shellcheck
-
-# Run security checks
-shellcheck scripts/*.sh
-
-# Run all test types
+# Run with verbose output
 ./test-runner.sh --verbose
-./unit-tests.sh --verbose
-./performance-tests.sh --iterations=3
+
+# Run only unit tests
+./test-runner.sh --test-type=unit
+
+# Run only performance tests with custom iterations
+./test-runner.sh --test-type=performance --iterations=10
 ```
 
-## Test Configuration
+### Test Options
+
+| Option | Description | Example |
+|--------|-------------|---------|
+| `--verbose` | Enable detailed output | `./test-runner.sh --verbose` |
+| `--test-type=TYPE` | Run specific test type (`unit`, `performance`, `all`) | `./test-runner.sh --test-type=unit` |
+| `--iterations=NUM` | Number of iterations for performance tests | `./test-runner.sh --iterations=10` |
+
+### Individual Test Execution
+```bash
+# Run unit tests directly
+./unit-tests.sh --verbose
+
+# Run performance tests with specific iterations
+./performance-tests.sh --iterations=20
+
+# Run specific test function
+./unit-tests.sh --function=test_ksr_cli_integration
+```
+
+## 📋 Prerequisites
+
+### System Requirements
+- **bash** 4.0+ (for test scripts)
+- **curl** (for downloading ksr-cli)
+- **wget** (for file downloads)
+- **python3** (for mock server and YAML validation)
+- **jq** (for JSON processing)
+- **tar** (for extracting ksr-cli)
+
+### Optional Dependencies
+- **PyYAML** - For action.yml validation
+- **bc** - For performance calculations (falls back to Python)
+
+### Installation
+```bash
+# Ubuntu/Debian
+sudo apt-get update
+sudo apt-get install curl wget python3 jq tar
+
+# macOS
+brew install curl wget python3 jq
+
+# Install Python dependencies
+pip3 install PyYAML
+```
+
+## 🏗️ Test Architecture
+
+### Test Framework
+The tests use a custom framework (`test-framework.sh`) that provides:
+- Colored output for better readability
+- Test case organization and reporting
+- Mock server capabilities
+- Assertion helpers
+- Cleanup utilities
+
+### Mock Schema Registry
+Tests use a Python-based mock Schema Registry server that:
+- Simulates real Schema Registry API endpoints
+- Provides configurable response times
+- Supports multiple concurrent requests
+- Implements compatibility checking endpoints
+
+## 📊 Test Coverage
+
+### GitHub Action Components
+- ✅ Action configuration (action.yml)
+- ✅ ksr-cli installation and setup
+- ✅ Environment variable handling
+- ✅ Input parameter validation
+- ✅ Output generation
+- ✅ Error handling and reporting
+
+### ksr-cli Operations
+- ✅ Version checking and help commands
+- ✅ Schema validation operations
+- ✅ Compatibility checking
+- ✅ Schema export functionality
+- ✅ Registry connectivity
+- ✅ Authentication methods
+
+### Performance Metrics
+- ✅ CLI startup time
+- ✅ Schema processing performance
+- ✅ Memory usage monitoring
+- ✅ Bulk operation efficiency
+- ✅ Network operation timing
+
+## 🔧 Test Configuration
 
 ### Environment Variables
+Tests respect the following environment variables:
+- `TEST_TEMP_DIR` - Override temporary directory location
+- `TEST_VERBOSE` - Enable verbose mode
+- `KSR_LOG_LEVEL` - Set ksr-cli log level for tests
 
-The tests respect these environment variables:
+### Mock Server Configuration
+The mock server can be configured through:
+- Port selection (automatic for conflict avoidance)
+- Response latency simulation
+- Error rate injection
+- Subject list customization
 
-- `VERBOSE`: Enable verbose output
-- `TEMP_DIR`: Override temporary directory
-- `MOCK_SERVER_PORT`: Override mock server port
-- `TEST_TIMEOUT`: Override test timeout
-
-### Test Customization
-
-You can customize test behavior:
-
-```bash
-# Set custom iterations for performance tests
-export PERFORMANCE_ITERATIONS=50
-
-# Use custom temporary directory
-export TEMP_DIR=/tmp/custom-test-dir
-
-# Enable debug mode
-export DEBUG=true
-```
-
-## Troubleshooting
+## 🐛 Troubleshooting
 
 ### Common Issues
 
-1. **Permission Denied**
-   ```bash
-   chmod +x tests/*.sh
-   chmod +x scripts/*.sh
-   ```
+#### ksr-cli Installation Fails
+```bash
+# Check architecture support
+uname -m
+# Should be x86_64, aarch64, or arm64
 
-2. **Missing Dependencies**
-   ```bash
-   sudo apt-get install jq bc curl python3
-   pip install jsonschema
-   ```
+# Check internet connectivity
+curl -I https://github.com/aywengo/ksr-cli/releases/latest
+```
 
-3. **Port Conflicts**
-   ```bash
-   # Check if port 8081 is in use
-   lsof -i :8081
-   
-   # Kill conflicting processes
-   pkill -f "8081"
-   ```
+#### Mock Server Doesn't Start
+```bash
+# Check if port is available
+netstat -tlnp | grep :8081
 
-4. **Test Timeouts**
-   ```bash
-   # Increase timeout
-   export TEST_TIMEOUT=60
-   
-   # Run with fewer iterations
-   ./performance-tests.sh --iterations=5
-   ```
+# Check Python installation
+python3 --version
+python3 -c "import http.server"
+```
+
+#### Tests Timeout
+```bash
+# Reduce iteration count
+./test-runner.sh --test-type=performance --iterations=3
+
+# Check system resources
+free -h
+top
+```
 
 ### Debug Mode
-
-Enable debug mode for detailed output:
-
 ```bash
-export DEBUG=true
+# Enable maximum verbosity
+export TEST_VERBOSE=true
+export KSR_LOG_LEVEL=debug
 ./test-runner.sh --verbose
 ```
 
-### Test Isolation
+## 📈 Performance Benchmarks
 
-Each test runs in isolation with:
-- Temporary directories
-- Mock services on different ports
-- Clean environment variables
-- Separate process spaces
+### Expected Performance Ranges
+These are typical performance ranges on modern hardware:
 
-## Best Practices
+| Operation | Small Schema | Medium Schema | Large Schema |
+|-----------|-------------|---------------|--------------|
+| Validation | < 0.5s | < 1.0s | < 2.0s |
+| Export | < 1.0s | < 2.0s | < 5.0s |
+| Compatibility Check | < 0.5s | < 1.0s | < 1.5s |
 
-### Writing Tests
+### Performance Factors
+- Network latency to Schema Registry
+- Schema complexity (field count, nested structures)
+- System resources (CPU, memory)
+- ksr-cli version and optimizations
 
-1. **Test Independence**: Each test should be independent
-2. **Cleanup**: Always clean up resources
-3. **Clear Names**: Use descriptive test names
-4. **Fast Execution**: Keep tests fast and focused
-5. **Error Handling**: Test both success and failure cases
+## 🚨 CI/CD Integration
 
-### Test Data
+### GitHub Actions
+```yaml
+name: Test ksr-cli Action
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Run Tests
+      run: |
+        cd tests
+        ./test-runner.sh --verbose
+```
 
-1. **Realistic Data**: Use realistic test schemas
-2. **Edge Cases**: Include edge cases and invalid data
-3. **Variety**: Test different schema types and sizes
-4. **Isolation**: Don't depend on external services
+### Pre-commit Hooks
+```bash
+# Add to .git/hooks/pre-commit
+#!/bin/bash
+cd tests && ./test-runner.sh --test-type=unit
+```
 
-### Performance Testing
+## 📝 Adding New Tests
 
-1. **Baseline**: Establish performance baselines
-2. **Consistency**: Run tests multiple times
-3. **Resource Limits**: Test with resource constraints
-4. **Scalability**: Test with increasing loads
+### Unit Test Example
+```bash
+# In unit-tests.sh
+test_new_feature() {
+  test_suite "New Feature Tests"
+  
+  setup_test_schemas
+  
+  test_case "Feature works correctly" \
+    "ksr-cli new-feature --option value" \
+    0
+}
+```
 
-## Contributing
+### Performance Test Example
+```bash
+# In performance-tests.sh
+test_new_performance() {
+  test_suite "New Feature Performance"
+  
+  measure_execution_time \
+    "ksr-cli new-feature --large-dataset" \
+    "New feature with large dataset"
+}
+```
 
-When adding new scripts or features:
+## 📚 References
 
-1. Add corresponding tests to all relevant test suites
-2. Update this README with new test instructions
-3. Ensure CI/CD tests pass
-4. Document any new test utilities
+- [ksr-cli GitHub Repository](https://github.com/aywengo/ksr-cli)
+- [Schema Registry Documentation](https://docs.confluent.io/platform/current/schema-registry/index.html)
+- [GitHub Actions Documentation](https://docs.github.com/en/actions)
+- [Avro Schema Specification](https://avro.apache.org/docs/current/spec.html)
 
-## Support
+## 🤝 Contributing
 
-For issues with the testing framework:
+When adding new tests:
+1. Follow the existing test structure and naming conventions
+2. Add comprehensive error handling
+3. Include both positive and negative test cases
+4. Update this README with new test descriptions
+5. Ensure tests are deterministic and don't rely on external services
+6. Add appropriate cleanup for any resources created
 
-1. Check the troubleshooting section
-2. Review test logs in `/tmp/test_*.log`
-3. Run tests with `--verbose` for detailed output
-4. Check mock server logs for network-related issues
+## 📄 License
 
-The testing framework ensures that all Schema Registry scripts work correctly, perform well, and handle edge cases appropriately. 
+These tests are part of the ksr-cli GitHub Action project and follow the same license terms. 
