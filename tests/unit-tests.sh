@@ -127,7 +127,7 @@ install_ksr_cli() {
   fi
   
   # Download and install
-  CLI_URL="https://github.com/aywengo/ksr-cli/releases/download/${CLI_VERSION}/ksr-cli_${CLI_VERSION#v}_${OS}_${ARCH}.tar.gz"
+  CLI_URL="https://github.com/aywengo/ksr-cli/releases/download/${CLI_VERSION}/ksr-cli-${OS}-${ARCH}.tar.gz"
   
   if wget -q "$CLI_URL" -O "$TEMP_DIR/ksr-cli.tar.gz" 2>/dev/null; then
     cd "$TEMP_DIR"

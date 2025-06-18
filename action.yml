@@ -195,7 +195,7 @@ runs:
         fi
         
         # Download ksr-cli binary
-        CLI_URL="https://github.com/aywengo/ksr-cli/releases/download/${CLI_VERSION}/ksr-cli_${CLI_VERSION#v}_${OS}_${ARCH}.tar.gz"
+        CLI_URL="https://github.com/aywengo/ksr-cli/releases/download/${CLI_VERSION}/ksr-cli-${OS}-${ARCH}.tar.gz"
         echo "Downloading ksr-cli from: $CLI_URL"
         
         wget -q "$CLI_URL" -O ksr-cli.tar.gz
