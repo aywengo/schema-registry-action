@@ -127,11 +127,13 @@ echo ""
 # Get subjects from both registries
 echo "Fetching subjects from source registry..."
 SOURCE_SUBJECTS=$(get_subjects "$SOURCE_REGISTRY" "$SOURCE_AUTH")
-SOURCE_SUBJECTS_ARRAY=($(echo "$SOURCE_SUBJECTS" | jq -r '.[]' 2>/dev/null))
+# Use mapfile instead of array assignment to avoid SC2207
+mapfile -t SOURCE_SUBJECTS_ARRAY < <(echo "$SOURCE_SUBJECTS" | jq -r '.[]' 2>/dev/null)
 
 echo "Fetching subjects from target registry..."
 TARGET_SUBJECTS=$(get_subjects "$TARGET_REGISTRY" "$TARGET_AUTH")
-TARGET_SUBJECTS_ARRAY=($(echo "$TARGET_SUBJECTS" | jq -r '.[]' 2>/dev/null))
+# Use mapfile instead of array assignment to avoid SC2207
+mapfile -t TARGET_SUBJECTS_ARRAY < <(echo "$TARGET_SUBJECTS" | jq -r '.[]' 2>/dev/null)
 
 # Find differences in subjects
 ONLY_IN_SOURCE=()
@@ -140,7 +142,16 @@ COMMON_SUBJECTS=()
 
 # Find subjects only in source
 for subject in "${SOURCE_SUBJECTS_ARRAY[@]}"; do
-  if [[ ! " ${TARGET_SUBJECTS_ARRAY[@]} " =~ " ${subject} " ]]; then
+  # Use a flag to check if subject exists in target array
+  found=false
+  for target_subject in "${TARGET_SUBJECTS_ARRAY[@]}"; do
+    if [[ "$target_subject" == "$subject" ]]; then
+      found=true
+      break
+    fi
+  done
+  
+  if [[ "$found" == "false" ]]; then
     ONLY_IN_SOURCE+=("$subject")
   else
     COMMON_SUBJECTS+=("$subject")
@@ -149,7 +160,16 @@ done
 
 # Find subjects only in target
 for subject in "${TARGET_SUBJECTS_ARRAY[@]}"; do
-  if [[ ! " ${SOURCE_SUBJECTS_ARRAY[@]} " =~ " ${subject} " ]]; then
+  # Use a flag to check if subject exists in source array
+  found=false
+  for source_subject in "${SOURCE_SUBJECTS_ARRAY[@]}"; do
+    if [[ "$source_subject" == "$subject" ]]; then
+      found=true
+      break
+    fi
+  done
+  
+  if [[ "$found" == "false" ]]; then
     ONLY_IN_TARGET+=("$subject")
   fi
 done
@@ -182,8 +202,9 @@ if [ "$COMPARE_MODE" == "all" ] || [ "$COMPARE_MODE" == "schemas" ]; then
     SOURCE_VERSIONS=$(get_versions "$SOURCE_REGISTRY" "$subject" "$SOURCE_AUTH")
     TARGET_VERSIONS=$(get_versions "$TARGET_REGISTRY" "$subject" "$TARGET_AUTH")
     
-    SOURCE_VERSIONS_ARRAY=($(echo "$SOURCE_VERSIONS" | jq -r '.[]' 2>/dev/null))
-    TARGET_VERSIONS_ARRAY=($(echo "$TARGET_VERSIONS" | jq -r '.[]' 2>/dev/null))
+    # Use mapfile instead of array assignment to avoid SC2207
+    mapfile -t SOURCE_VERSIONS_ARRAY < <(echo "$SOURCE_VERSIONS" | jq -r '.[]' 2>/dev/null)
+    mapfile -t TARGET_VERSIONS_ARRAY < <(echo "$TARGET_VERSIONS" | jq -r '.[]' 2>/dev/null)
     
     # Check version differences
     if [ "${#SOURCE_VERSIONS_ARRAY[@]}" -ne "${#TARGET_VERSIONS_ARRAY[@]}" ]; then

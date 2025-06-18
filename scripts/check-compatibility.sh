@@ -56,19 +56,75 @@ fi
 RESULT_FILE="operation-result.json"
 echo '{"operation": "check-compatibility", "status": "running", "checks": []}' > "$RESULT_FILE"
 
-# Function to check compatibility for a single schema
-check_schema_compatibility() {
+# Function to test compatibility
+test_compatibility() {
+  local registry_url="$1"
+  local subject="$2"
+  local schema_content="$3"
+  
+  local request_body
+  request_body=$(jq -n --arg schema "$schema_content" '{"schema": $schema}')
+  
+  response=$(curl -s -w "\n%{http_code}" \
+    -X POST \
+    -H "Content-Type: application/vnd.schemaregistry.v1+json" \
+    ${SCHEMA_REGISTRY_AUTH:+-u "$SCHEMA_REGISTRY_AUTH"} \
+    "${registry_url}/compatibility/subjects/${subject}/versions/latest" \
+    -d "$request_body")
+  
+  http_code=$(echo "$response" | tail -n1)
+  body=$(echo "$response" | sed '$d')
+  
+  if [ "$http_code" -eq 200 ]; then
+    echo "$body"
+  else
+    jq -n --arg error "HTTP $http_code" --arg details "$body" \
+      '{"is_compatible": false, "messages": [$error, $details]}'
+  fi
+}
+
+# Function to get global compatibility configuration
+get_global_compatibility() {
+  local registry_url="$1"
+  
+  response=$(curl -s -w "\n%{http_code}" \
+    ${SCHEMA_REGISTRY_AUTH:+-u "$SCHEMA_REGISTRY_AUTH"} \
+    "${registry_url}/config")
+    
+  http_code=$(echo "$response" | tail -n1)
+  body=$(echo "$response" | sed '$d')
+  
+  if [ "$http_code" -eq 200 ]; then
+    echo "$body"
+  else
+    echo '{"compatibilityLevel": "BACKWARD"}'
+  fi
+}
+
+# Main compatibility check function
+check_compatibility() {
   local subject="$1"
   local schema_file="$2"
-  local schema_type="${3:-AVRO}"
+  local compatibility_level="$3"
   
-  # Read and prepare schema
-  local schema_content=$(cat "$schema_file" | jq -c .)
+  echo "Checking compatibility for subject: $subject"
+  
+  # Read schema
+  local schema_content
+  schema_content=$(cat "$schema_file" | jq -c .)
+  
+  # Check global compatibility if no level specified
+  if [ -z "$compatibility_level" ]; then
+    local global_config
+    global_config=$(get_global_compatibility "$REGISTRY_URL")
+    compatibility_level=$(echo "$global_config" | jq -r '.compatibilityLevel // "BACKWARD"')
+  fi
   
   # Prepare request body
-  local request_body=$(jq -n \
+  local request_body
+  request_body=$(jq -n \
     --arg schema "$schema_content" \
-    --arg type "$schema_type" \
+    --arg type "AVRO" \
     '{"schema": $schema, "schemaType": $type}')
   
   echo "Checking compatibility for: $subject"
@@ -88,29 +144,21 @@ check_schema_compatibility() {
     return 1
   fi
   
-  # Check compatibility
-  response=$(curl -s -w "\n%{http_code}" \
-    -X POST \
-    -H "Content-Type: application/vnd.schemaregistry.v1+json" \
-    ${SCHEMA_REGISTRY_AUTH:+-u "$SCHEMA_REGISTRY_AUTH"} \
-    "${REGISTRY_URL}/compatibility/subjects/${subject}/versions/latest" \
-    -d "$request_body")
+  # Test compatibility
+  local test_response
+  test_response=$(test_compatibility "$REGISTRY_URL" "$subject" "$schema_content")
   
-  http_code=$(echo "$response" | tail -n1)
-  body=$(echo "$response" | sed '$d')
+  local is_compatible
+  local compatibility_errors
+  is_compatible=$(echo "$test_response" | jq -r '.is_compatible // false')
+  compatibility_errors=$(echo "$test_response" | jq -r '.messages[]? // empty' 2>/dev/null)
   
-  if [ "$http_code" -eq 200 ]; then
-    is_compatible=$(echo "$body" | jq -r '.is_compatible')
-    if [ "$is_compatible" == "true" ]; then
-      echo "  ✓ Compatible"
-      return 0
-    else
-      echo "  ✗ Not compatible"
-      echo "  Details: $(echo "$body" | jq -r '.messages[]?' 2>/dev/null || echo "No details available")"
-      return 1
-    fi
+  if [ "$is_compatible" == "true" ]; then
+    echo "  ✓ Compatible"
+    return 0
   else
-    echo "  ✗ Error checking compatibility: $body"
+    echo "  ✗ Not compatible"
+    echo "  Details: $compatibility_errors"
     return 1
   fi
 }
@@ -118,13 +166,16 @@ check_schema_compatibility() {
 # Function to extract subject from schema file
 extract_subject() {
   local schema_file="$1"
-  local filename=$(basename "$schema_file")
+  local filename
+  filename=$(basename "$schema_file")
   local subject="${filename%.*}"
   
   # Try to extract from schema namespace and name
   if [[ "$schema_file" == *.avsc ]]; then
-    local namespace=$(jq -r '.namespace // empty' "$schema_file" 2>/dev/null)
-    local name=$(jq -r '.name // empty' "$schema_file" 2>/dev/null)
+    local namespace
+    local name
+    namespace=$(jq -r '.namespace // empty' "$schema_file" 2>/dev/null)
+    name=$(jq -r '.name // empty' "$schema_file" 2>/dev/null)
     
     if [ ! -z "$namespace" ] && [ ! -z "$name" ]; then
       subject="${namespace}.${name}"
@@ -160,7 +211,7 @@ if [ ! -z "$SCHEMA_FILE" ] && [ -f "$SCHEMA_FILE" ]; then
     SUBJECT=$(extract_subject "$SCHEMA_FILE")
   fi
   
-  if check_schema_compatibility "$SUBJECT" "$SCHEMA_FILE"; then
+  if check_compatibility "$SUBJECT" "$SCHEMA_FILE" "$COMPATIBILITY_LEVEL"; then
     COMPATIBLE_SCHEMAS=1
     
     jq --arg subject "$SUBJECT" --arg file "$SCHEMA_FILE" --arg status "compatible" \
@@ -181,7 +232,7 @@ else
     TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
     subject=$(extract_subject "$schema_file")
     
-    if check_schema_compatibility "$subject" "$schema_file" "AVRO"; then
+    if check_compatibility "$subject" "$schema_file" "$COMPATIBILITY_LEVEL"; then
       COMPATIBLE_SCHEMAS=$((COMPATIBLE_SCHEMAS + 1))
       
       jq --arg subject "$subject" --arg file "$schema_file" --arg status "compatible" \
@@ -202,7 +253,7 @@ else
     TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
     subject=$(extract_subject "$schema_file")
     
-    if check_schema_compatibility "$subject" "$schema_file" "PROTOBUF"; then
+    if check_compatibility "$subject" "$schema_file" "$COMPATIBILITY_LEVEL"; then
       COMPATIBLE_SCHEMAS=$((COMPATIBLE_SCHEMAS + 1))
       
       jq --arg subject "$subject" --arg file "$schema_file" --arg status "compatible" \

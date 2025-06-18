@@ -56,12 +56,17 @@ mkdir -p "$OUTPUT_PATH"
 # Function to generate AVRO schema documentation
 generate_avro_docs() {
   local schema_file="$1"
-  local schema=$(cat "$schema_file" | jq .)
+  local schema
+  schema=$(cat "$schema_file" | jq .)
   
-  local namespace=$(echo "$schema" | jq -r '.namespace // ""')
-  local name=$(echo "$schema" | jq -r '.name // "Unknown"')
-  local type=$(echo "$schema" | jq -r '.type // "record"')
-  local doc=$(echo "$schema" | jq -r '.doc // "No description available"')
+  local namespace
+  local name
+  local type
+  local doc
+  namespace=$(echo "$schema" | jq -r '.namespace // ""')
+  name=$(echo "$schema" | jq -r '.name // "Unknown"')
+  type=$(echo "$schema" | jq -r '.type // "record"')
+  doc=$(echo "$schema" | jq -r '.doc // "No description available"')
   
   local full_name="$name"
   if [ ! -z "$namespace" ]; then
@@ -83,20 +88,26 @@ generate_avro_docs() {
         docs+="|-------|------|----------|-------------|\n"
         
         # Process fields
-        local fields=$(echo "$schema" | jq -c '.fields[]?' 2>/dev/null)
+        local fields
+        fields=$(echo "$schema" | jq -c '.fields[]?' 2>/dev/null)
         while IFS= read -r field; do
-          if [ ! -z "$field" ]; then
-            local field_name=$(echo "$field" | jq -r '.name')
-            local field_type=$(echo "$field" | jq -r '.type | if type == "array" then tostring else . end')
-            local field_doc=$(echo "$field" | jq -r '.doc // "No description"')
-            local field_default=$(echo "$field" | jq -r 'if has("default") then "No" else "Yes" end')
+          if [ -n "$field" ]; then
+            local field_name
+            local field_type
+            local field_doc
+            local field_default
+            field_name=$(echo "$field" | jq -r '.name')
+            field_type=$(echo "$field" | jq -r '.type | if type == "array" then tostring else . end' | sed 's/</\&lt;/g' | sed 's/>/\&gt;/g')
+            field_doc=$(echo "$field" | jq -r '.doc // "No description"')
+            field_default=$(echo "$field" | jq -r 'if has("default") then "No" else "Yes" end')
             
             docs+="| $field_name | $field_type | $field_default | $field_doc |\n"
           fi
         done <<< "$fields"
       elif [ "$type" == "enum" ]; then
         docs+="## Values\n\n"
-        local symbols=$(echo "$schema" | jq -r '.symbols[]?' 2>/dev/null)
+        local symbols
+        symbols=$(echo "$schema" | jq -r '.symbols[]?' 2>/dev/null)
         while IFS= read -r symbol; do
           if [ ! -z "$symbol" ]; then
             docs+="- \`$symbol\`\n"
@@ -156,7 +167,8 @@ generate_avro_docs() {
       ;;
       
     json)
-      local doc_json=$(jq -n \
+      local doc_json
+      doc_json=$(jq -n \
         --arg name "$full_name" \
         --arg type "$type" \
         --arg description "$doc" \
@@ -170,10 +182,12 @@ generate_avro_docs() {
       
       if [ "$type" == "record" ]; then
         local fields_doc=()
-        local fields=$(echo "$schema" | jq -c '.fields[]?' 2>/dev/null)
+        local fields
+        fields=$(echo "$schema" | jq -c '.fields[]?' 2>/dev/null)
         while IFS= read -r field; do
           if [ ! -z "$field" ]; then
-            local field_doc=$(echo "$field" | jq '{
+            local field_doc
+            field_doc=$(echo "$field" | jq '{
               name: .name,
               type: .type,
               required: (has("default") | not),
@@ -184,7 +198,8 @@ generate_avro_docs() {
         done <<< "$fields"
         
         if [ ${#fields_doc[@]} -gt 0 ]; then
-          local fields_json=$(printf '%s\n' "${fields_doc[@]}" | jq -s .)
+          local fields_json
+          fields_json=$(printf '%s\n' "${fields_doc[@]}" | jq -s .)
           doc_json=$(echo "$doc_json" | jq --argjson fields "$fields_json" '.fields = $fields')
         fi
       fi
@@ -199,11 +214,14 @@ generate_avro_docs() {
 # Function to generate Protobuf documentation
 generate_protobuf_docs() {
   local schema_file="$1"
-  local filename=$(basename "$schema_file")
+  local filename
+  filename=$(basename "$schema_file")
   
   # Extract basic information from proto file
-  local package=$(grep "^package" "$schema_file" | sed 's/package \(.*\);/\1/' | head -1)
-  local syntax=$(grep "^syntax" "$schema_file" | sed 's/.*"\(.*\)".*/\1/' | head -1)
+  local package
+  local syntax
+  package=$(grep "^package" "$schema_file" | sed 's/package \(.*\);/\1/' | head -1)
+  syntax=$(grep "^syntax" "$schema_file" | sed 's/.*"\(.*\)".*/\1/' | head -1)
   
   local docs=""
   

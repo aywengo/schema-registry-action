@@ -8,7 +8,7 @@ set -e
 SCHEMAS_PATH="./schemas"
 REGISTRY_URL=""
 DRY_RUN="false"
-CREATE_SUBJECTS="true"
+# CREATE_SUBJECTS variable removed as it was unused
 NORMALIZE="true"
 SUBJECT_PREFIX=""
 
@@ -28,7 +28,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --create-subjects)
-      CREATE_SUBJECTS="$2"
+      # CREATE_SUBJECTS variable removed as it was unused
       shift 2
       ;;
     --normalize)
@@ -67,8 +67,9 @@ register_schema() {
     subject="${SUBJECT_PREFIX}${subject}"
   fi
   
-  # Read and prepare schema
-  local schema_content=$(cat "$schema_file" | jq -c .)
+  # Read and prepare schema (avoid useless cat)
+  local schema_content
+  schema_content=$(jq -c . < "$schema_file")
   
   # Normalize if requested
   if [ "$NORMALIZE" == "true" ]; then
@@ -76,7 +77,8 @@ register_schema() {
   fi
   
   # Prepare request body
-  local request_body=$(jq -n \
+  local request_body
+  request_body=$(jq -n \
     --arg schema "$schema_content" \
     --arg type "$schema_type" \
     '{schema: $schema, schemaType: $type}')
@@ -102,7 +104,7 @@ register_schema() {
   
   if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
     echo "✓ Successfully deployed: $subject"
-    schema_id=$(echo "$body" | jq -r '.id')
+    # Remove unused schema_id variable
     return 0
   else
     echo "✗ Failed to deploy: $subject"

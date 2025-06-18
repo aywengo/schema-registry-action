@@ -75,6 +75,7 @@ declare -A DEFAULT_JSON_RULES=(
 if [ ! -z "$RULES_FILE" ] && [ -f "$RULES_FILE" ]; then
   echo "Loading custom rules from: $RULES_FILE"
   # Source the rules file or parse JSON/YAML rules
+  # shellcheck source=/dev/null
   source "$RULES_FILE" 2>/dev/null || true
 fi
 
@@ -84,7 +85,8 @@ lint_avro_schema() {
   local issues=()
   
   # Read schema
-  local schema=$(cat "$schema_file" 2>/dev/null)
+  local schema
+  schema=$(cat "$schema_file" 2>/dev/null)
   if [ -z "$schema" ]; then
     issues+=("ERROR: Cannot read schema file")
     echo "${issues[@]}"
@@ -100,7 +102,8 @@ lint_avro_schema() {
   
   # Check namespace requirement
   if [ "${DEFAULT_AVRO_RULES[namespace_required]}" == "true" ]; then
-    local namespace=$(echo "$schema" | jq -r '.namespace // empty')
+    local namespace
+    namespace=$(echo "$schema" | jq -r '.namespace // empty')
     if [ -z "$namespace" ]; then
       issues+=("WARN: Missing namespace")
     fi
@@ -108,7 +111,8 @@ lint_avro_schema() {
   
   # Check documentation
   if [ "${DEFAULT_AVRO_RULES[doc_required]}" == "true" ]; then
-    local doc=$(echo "$schema" | jq -r '.doc // empty')
+    local doc
+    doc=$(echo "$schema" | jq -r '.doc // empty')
     if [ -z "$doc" ]; then
       issues+=("WARN: Missing documentation")
     fi
@@ -116,7 +120,8 @@ lint_avro_schema() {
   
   # Check field documentation
   if [ "${DEFAULT_AVRO_RULES[field_doc_required]}" == "true" ]; then
-    local fields_without_doc=$(echo "$schema" | jq -r '.fields[]? | select(.doc == null) | .name' 2>/dev/null)
+    local fields_without_doc
+    fields_without_doc=$(echo "$schema" | jq -r '.fields[]? | select(.doc == null) | .name' 2>/dev/null)
     if [ ! -z "$fields_without_doc" ]; then
       while IFS= read -r field; do
         issues+=("WARN: Field '$field' missing documentation")
@@ -125,7 +130,8 @@ lint_avro_schema() {
   fi
   
   # Check naming convention
-  local name=$(echo "$schema" | jq -r '.name // empty')
+  local name
+  name=$(echo "$schema" | jq -r '.name // empty')
   if [ ! -z "$name" ] && [ "${DEFAULT_AVRO_RULES[naming_convention]}" == "camelCase" ]; then
     if ! [[ "$name" =~ ^[a-z][a-zA-Z0-9]*$ ]]; then
       issues+=("WARN: Name '$name' does not follow camelCase convention")
@@ -133,9 +139,11 @@ lint_avro_schema() {
   fi
   
   # Check enum values
-  local enums=$(echo "$schema" | jq -r '.type // "" | select(. == "enum")')
+  local enums
+  enums=$(echo "$schema" | jq -r '.type // "" | select(. == "enum")')
   if [ ! -z "$enums" ] && [ "${DEFAULT_AVRO_RULES[enum_uppercase]}" == "true" ]; then
-    local non_uppercase=$(echo "$schema" | jq -r '.symbols[]? | select(test("^[A-Z_]+$") | not)')
+    local non_uppercase
+    non_uppercase=$(echo "$schema" | jq -r '.symbols[]? | select(test("^[A-Z_]+$") | not)')
     if [ ! -z "$non_uppercase" ]; then
       while IFS= read -r symbol; do
         issues+=("WARN: Enum symbol '$symbol' should be uppercase")
@@ -144,7 +152,8 @@ lint_avro_schema() {
   fi
   
   # Check for required fields
-  local type=$(echo "$schema" | jq -r '.type // empty')
+  local type
+  type=$(echo "$schema" | jq -r '.type // empty')
   if [ -z "$type" ]; then
     issues+=("ERROR: Missing 'type' field")
   fi
@@ -215,7 +224,8 @@ lint_json_schema() {
   local issues=()
   
   # Read schema
-  local schema=$(cat "$schema_file" 2>/dev/null)
+  local schema
+  schema=$(cat "$schema_file" 2>/dev/null)
   if [ -z "$schema" ]; then
     issues+=("ERROR: Cannot read schema file")
     echo "${issues[@]}"
@@ -230,7 +240,8 @@ lint_json_schema() {
   fi
   
   # Check for JSON Schema
-  local schema_version=$(echo "$schema" | jq -r '."$schema" // empty')
+  local schema_version
+  schema_version=$(echo "$schema" | jq -r '."$schema" // empty')
   if [ "${DEFAULT_JSON_RULES[schema_version_required]}" == "true" ]; then
     if [ -z "$schema_version" ]; then
       issues+=("ERROR: Missing $schema declaration")
@@ -239,7 +250,8 @@ lint_json_schema() {
   
   # Check title
   if [ "${DEFAULT_JSON_RULES[title_required]}" == "true" ]; then
-    local title=$(echo "$schema" | jq -r '.title // empty')
+    local title
+    title=$(echo "$schema" | jq -r '.title // empty')
     if [ -z "$title" ]; then
       issues+=("WARN: Missing title")
     fi
@@ -247,7 +259,8 @@ lint_json_schema() {
   
   # Check description
   if [ "${DEFAULT_JSON_RULES[description_required]}" == "true" ]; then
-    local description=$(echo "$schema" | jq -r '.description // empty')
+    local description
+    description=$(echo "$schema" | jq -r '.description // empty')
     if [ -z "$description" ]; then
       issues+=("WARN: Missing description")
     fi
@@ -255,7 +268,8 @@ lint_json_schema() {
   
   # Check additionalProperties
   if [ "${DEFAULT_JSON_RULES[additional_properties]}" == "false" ]; then
-    local additional_props=$(echo "$schema" | jq -r '.additionalProperties // "true"')
+    local additional_props
+    additional_props=$(echo "$schema" | jq -r '.additionalProperties // "true"')
     if [ "$additional_props" != "false" ]; then
       issues+=("WARN: Consider setting additionalProperties to false")
     fi

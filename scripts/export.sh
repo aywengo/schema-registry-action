@@ -123,9 +123,12 @@ export_schema() {
   local schema_data="$3"
   
   # Extract schema content and metadata
-  local schema_id=$(echo "$schema_data" | jq -r '.id // "unknown"')
-  local schema_type=$(echo "$schema_data" | jq -r '.schemaType // "AVRO"')
-  local schema_content=$(echo "$schema_data" | jq -r '.schema // "{}"')
+  local schema_id
+  local schema_type
+  local schema_content
+  schema_id=$(echo "$schema_data" | jq -r '.id // "unknown"')
+  schema_type=$(echo "$schema_data" | jq -r '.schemaType // "AVRO"')
+  schema_content=$(echo "$schema_data" | jq -r '.schema // "{}"')
   
   # Determine file extension based on schema type
   local extension="avsc"
@@ -198,7 +201,8 @@ echo ""
 # Get all subjects
 echo "Fetching subjects..."
 SUBJECTS=$(get_subjects "$REGISTRY_URL")
-SUBJECTS_ARRAY=($(echo "$SUBJECTS" | jq -r '.[]' 2>/dev/null))
+# Use mapfile instead of array assignment to avoid SC2207
+mapfile -t SUBJECTS_ARRAY < <(echo "$SUBJECTS" | jq -r '.[]' 2>/dev/null)
 
 # Apply subject filter if provided
 if [ ! -z "$SUBJECT_FILTER" ]; then
@@ -224,7 +228,8 @@ for subject in "${SUBJECTS_ARRAY[@]}"; do
   if [ "$INCLUDE_VERSIONS" == "all" ]; then
     # Export all versions
     VERSIONS=$(get_versions "$REGISTRY_URL" "$subject")
-    VERSIONS_ARRAY=($(echo "$VERSIONS" | jq -r '.[]' 2>/dev/null))
+    # Use mapfile instead of array assignment to avoid SC2207
+    mapfile -t VERSIONS_ARRAY < <(echo "$VERSIONS" | jq -r '.[]' 2>/dev/null)
     
     for version in "${VERSIONS_ARRAY[@]}"; do
       SCHEMA_DATA=$(get_schema "$REGISTRY_URL" "$subject" "$version")
