@@ -33,7 +33,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y jq bc curl
-        pip install jsonschema
+        pip install jsonschema PyYAML
         
         # Install optional tools for performance testing
         if [[ "${{ matrix.test-type }}" == "performance" ]]; then
@@ -95,6 +95,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y jq bc curl
+        pip install PyYAML
     
     - name: Make scripts executable
       run: |
@@ -126,11 +127,13 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y jq bc curl
+        pip install PyYAML
     
     - name: Install dependencies (macOS)
       if: matrix.os == 'macos-latest'
       run: |
         brew install jq bc curl
+        pip3 install PyYAML
     
     - name: Make scripts executable
       run: |

@@ -231,7 +231,9 @@ validate_action_yml() {
   fi
   
   # Check if action.yml is valid YAML
-  if python3 -c "
+  if python3 -c "import yaml" 2>/dev/null; then
+    # PyYAML is available, do full validation
+    if python3 -c "
 import yaml
 import sys
 try:
@@ -242,10 +244,20 @@ except Exception as e:
     print(f'✗ action.yml is invalid: {e}')
     sys.exit(1)
 " 2>/dev/null; then
-    log_success "action.yml validation passed"
+      log_success "action.yml validation passed"
+    else
+      log_error "action.yml validation failed"
+      return 1
+    fi
   else
-    log_error "action.yml validation failed"
-    return 1
+    # PyYAML not available, do basic syntax check
+    log_info "PyYAML not available, performing basic syntax check..."
+    if grep -q "^name:" "$SCRIPT_DIR/action.yml" && grep -q "^description:" "$SCRIPT_DIR/action.yml" && grep -q "^runs:" "$SCRIPT_DIR/action.yml"; then
+      log_success "action.yml basic validation passed"
+    else
+      log_error "action.yml missing required fields"
+      return 1
+    fi
   fi
   
   # Check for required fields
