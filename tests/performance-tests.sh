@@ -281,8 +281,15 @@ EOF
   MOCK_SERVER_PID=$!
   export MOCK_REGISTRY_URL="http://localhost:8082"
   
-  # Wait for server to start
-  sleep 3
+  # Wait for server to start and timeout if it takes too long
+  local wait_count=0
+  while [ $wait_count -lt 10 ]; do
+    if curl -s "$MOCK_REGISTRY_URL/subjects" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+    wait_count=$((wait_count + 1))
+  done
   
   if curl -s "$MOCK_REGISTRY_URL/subjects" >/dev/null 2>&1; then
     log_success "Mock registry server started at $MOCK_REGISTRY_URL"
@@ -481,37 +488,34 @@ test_action_performance() {
 
 # Main test execution
 main() {
-  # Ensure output goes to both console and log file
-  exec > >(tee -a "$LOG_FILE") 2>&1
-  
   log_info "Starting ksr-cli GitHub Action performance tests"
-  log_info "Test directory: $TEMP_DIR"
-  log_info "Iterations per test: $ITERATIONS"
-  
-  # Check system resources
-  log_info "System Information:"
-  echo "  OS: $(uname -s) $(uname -r)"
-  echo "  Architecture: $(uname -m)"
-  echo "  CPU: $(nproc 2>/dev/null || echo 'unknown') cores"
-  echo "  Memory: $(free -h 2>/dev/null | grep '^Mem:' | awk '{print $2}' || echo 'unknown')"
-  echo
-  
-  # Run performance tests
-  test_ksr_cli_startup_performance
-  test_schema_validation_performance
-  test_schema_export_performance
-  test_bulk_operations_performance
-  test_memory_usage
-  test_action_performance
-  
-  # Print final results
-  echo
-  echo "========================================"
-  log_info "Performance Test Summary"
-  echo "========================================"
-  log_success "All performance tests completed successfully"
-  log_info "Results above show average execution times over $ITERATIONS iterations"
+    log_info "Test directory: $TEMP_DIR"
+    log_info "Iterations per test: $ITERATIONS"
+    
+    # Check system resources
+    log_info "System Information:"
+    echo "  OS: $(uname -s) $(uname -r)"
+    echo "  Architecture: $(uname -m)"
+    echo "  CPU: $(nproc 2>/dev/null || echo 'unknown') cores"
+    echo "  Memory: $(free -h 2>/dev/null | grep '^Mem:' | awk '{print $2}' || echo 'unknown')"
+    echo
+    
+    # Run performance tests
+    test_ksr_cli_startup_performance
+    test_schema_validation_performance
+    test_schema_export_performance
+    test_bulk_operations_performance
+    test_memory_usage
+    test_action_performance
+    
+    # Print final results
+    echo
+    echo "========================================"
+    log_info "Performance Test Summary"
+    echo "========================================"
+    log_success "All performance tests completed successfully"
+    log_info "Results above show average execution times over $ITERATIONS iterations"
 }
 
 # Run main function
-main "$@" 
+main "$@" 2>&1 | tee "$LOG_FILE" 

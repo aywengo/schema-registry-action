@@ -211,8 +211,15 @@ EOF
   MOCK_SERVER_PID=$!
   export MOCK_REGISTRY_URL="http://localhost:8081"
   
-  # Wait for server to start
-  sleep 2
+  # Wait for server to start and timeout if it takes too long
+  local wait_count=0
+  while [ $wait_count -lt 10 ]; do
+    if curl -s "$MOCK_REGISTRY_URL/subjects" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+    wait_count=$((wait_count + 1))
+  done
   
   # Test if server is running
   if curl -s "$MOCK_REGISTRY_URL/subjects" >/dev/null 2>&1; then
@@ -354,47 +361,44 @@ test_output_formats() {
 
 # Main test execution
 main() {
-  # Ensure output goes to both console and log file
-  exec > >(tee -a "$LOG_FILE") 2>&1
-  
   log_info "Starting ksr-cli GitHub Action unit tests"
-  log_info "Test directory: $TEMP_DIR"
-  
-  # Run specific function if provided
-  if [ ! -z "$SPECIFIC_FUNCTION" ]; then
-    if declare -f "$SPECIFIC_FUNCTION" > /dev/null; then
-      "$SPECIFIC_FUNCTION"
+    log_info "Test directory: $TEMP_DIR"
+    
+    # Run specific function if provided
+    if [ ! -z "$SPECIFIC_FUNCTION" ]; then
+      if declare -f "$SPECIFIC_FUNCTION" > /dev/null; then
+        "$SPECIFIC_FUNCTION"
+      else
+        log_error "Function '$SPECIFIC_FUNCTION' not found"
+        exit 1
+      fi
     else
-      log_error "Function '$SPECIFIC_FUNCTION' not found"
+      # Run all tests
+      test_action_configuration
+      test_environment_setup
+      test_ksr_cli_integration
+      test_output_formats
+      test_action_validate
+    fi
+    
+    # Print final results
+    echo
+    echo "========================================"
+    log_info "Test Results Summary"
+    echo "========================================"
+    
+    if [ $FAILED_TESTS -eq 0 ]; then
+      log_success "All $TOTAL_TESTS tests passed!"
+    else
+      log_error "$FAILED_TESTS out of $TOTAL_TESTS tests failed"
+      echo
+      echo "Failed tests:"
+      for test_name in "${FAILED_TEST_NAMES[@]}"; do
+        echo "  - $test_name"
+      done
       exit 1
     fi
-  else
-    # Run all tests
-    test_action_configuration
-    test_environment_setup
-    test_ksr_cli_integration
-    test_output_formats
-    test_action_validate
-  fi
-  
-  # Print final results
-  echo
-  echo "========================================"
-  log_info "Test Results Summary"
-  echo "========================================"
-  
-  if [ $FAILED_TESTS -eq 0 ]; then
-    log_success "All $TOTAL_TESTS tests passed!"
-  else
-    log_error "$FAILED_TESTS out of $TOTAL_TESTS tests failed"
-    echo
-    echo "Failed tests:"
-    for test_name in "${FAILED_TEST_NAMES[@]}"; do
-      echo "  - $test_name"
-    done
-    exit 1
-  fi
 }
 
 # Run main function
-main "$@" 
+main "$@" 2>&1 | tee "$LOG_FILE" 

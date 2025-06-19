@@ -342,95 +342,92 @@ run_script_test() {
 
 # Main test execution
 main() {
-  # Ensure output goes to both console and log file
-  exec > >(tee -a "$LOG_FILE") 2>&1
-  
   echo "========================================"
-  echo "       ksr-cli GitHub Action Tests      "
-  echo "========================================"
-  echo "Test directory: $TEMP_DIR"
-  echo "Verbose mode: $VERBOSE"
-  echo "Test type: ${SPECIFIC_TEST:-all}"
-  echo "Specific script: ${SPECIFIC_SCRIPT:-none}"
-  echo "Performance iterations: $ITERATIONS"
-  echo "========================================"
-  echo
-  
-  # System checks
-  check_system_requirements
-  setup_test_environment
-  validate_action_yml
-  
-  echo
-  log_info "Starting test execution..."
-  
-  # Handle specific script test
-  if [ -n "$SPECIFIC_SCRIPT" ]; then
-    run_script_test "$SPECIFIC_SCRIPT"
-    return $?
-  fi
-  
-  # Run tests based on specified type
-  case "${SPECIFIC_TEST:-all}" in
-    unit)
-      run_test_suite "$TEST_DIR/unit-tests.sh" "Unit Tests"
-      ;;
-    performance)
-      run_test_suite "$TEST_DIR/performance-tests.sh" "Performance Tests" "--iterations=$ITERATIONS"
-      ;;
-    all)
-      # Run unit tests first
-      run_test_suite "$TEST_DIR/unit-tests.sh" "Unit Tests"
-      
-      # Run performance tests with reduced iterations for faster execution
-      local perf_iterations=$((ITERATIONS < 5 ? ITERATIONS : 5))
-      run_test_suite "$TEST_DIR/performance-tests.sh" "Performance Tests" "--iterations=$perf_iterations"
-      ;;
-    *)
-      log_error "Unknown test type: $SPECIFIC_TEST"
-      echo "Valid test types: unit, performance, all"
-      exit 1
-      ;;
-  esac
-  
-  # Print final results
-  echo
-  echo "========================================"
-  log_info "Test Execution Summary"
-  echo "========================================"
-  
-  echo "Total test suites: $TOTAL_TEST_SUITES"
-  echo "Passed: $PASSED_TEST_SUITES"
-  echo "Failed: $FAILED_TEST_SUITES"
-  
-  if [ $FAILED_TEST_SUITES -eq 0 ]; then
+    echo "       ksr-cli GitHub Action Tests      "
+    echo "========================================"
+    echo "Test directory: $TEMP_DIR"
+    echo "Verbose mode: $VERBOSE"
+    echo "Test type: ${SPECIFIC_TEST:-all}"
+    echo "Specific script: ${SPECIFIC_SCRIPT:-none}"
+    echo "Performance iterations: $ITERATIONS"
+    echo "========================================"
     echo
-    log_success "All test suites passed! 🎉"
     
-    # Show performance summary if performance tests were run
-    if [[ "${SPECIFIC_TEST:-all}" == "performance" || "${SPECIFIC_TEST:-all}" == "all" ]]; then
-      echo
-      log_info "Performance test results can be found in the output above"
-      log_info "Consider running with --iterations=10 for more accurate performance metrics"
+    # System checks
+    check_system_requirements
+    setup_test_environment
+    validate_action_yml
+    
+    echo
+    log_info "Starting test execution..."
+    
+    # Handle specific script test
+    if [ -n "$SPECIFIC_SCRIPT" ]; then
+      run_script_test "$SPECIFIC_SCRIPT"
+      return $?
     fi
-  else
+    
+    # Run tests based on specified type
+    case "${SPECIFIC_TEST:-all}" in
+      unit)
+        run_test_suite "$TEST_DIR/unit-tests.sh" "Unit Tests"
+        ;;
+      performance)
+        run_test_suite "$TEST_DIR/performance-tests.sh" "Performance Tests" "--iterations=$ITERATIONS"
+        ;;
+      all)
+        # Run unit tests first
+        run_test_suite "$TEST_DIR/unit-tests.sh" "Unit Tests"
+        
+        # Run performance tests with reduced iterations for faster execution
+        local perf_iterations=$((ITERATIONS < 5 ? ITERATIONS : 5))
+        run_test_suite "$TEST_DIR/performance-tests.sh" "Performance Tests" "--iterations=$perf_iterations"
+        ;;
+      *)
+        log_error "Unknown test type: $SPECIFIC_TEST"
+        echo "Valid test types: unit, performance, all"
+        exit 1
+        ;;
+    esac
+    
+    # Print final results
     echo
-    log_error "Some test suites failed:"
-    for suite in "${FAILED_SUITE_NAMES[@]}"; do
-      echo "  ✗ $suite"
-    done
-    echo
-    log_info "Check the detailed output above for error information"
-    log_info "Run with --verbose for more detailed output"
-    exit 1
-  fi
-  
-  # Cleanup information
-  if [ "$VERBOSE" = true ]; then
-    echo
-    log_info "Test artifacts saved in: $TEMP_DIR"
-    log_info "Run 'rm -rf $TEMP_DIR' to clean up manually"
-  fi
+    echo "========================================"
+    log_info "Test Execution Summary"
+    echo "========================================"
+    
+    echo "Total test suites: $TOTAL_TEST_SUITES"
+    echo "Passed: $PASSED_TEST_SUITES"
+    echo "Failed: $FAILED_TEST_SUITES"
+    
+    if [ $FAILED_TEST_SUITES -eq 0 ]; then
+      echo
+      log_success "All test suites passed! 🎉"
+      
+      # Show performance summary if performance tests were run
+      if [[ "${SPECIFIC_TEST:-all}" == "performance" || "${SPECIFIC_TEST:-all}" == "all" ]]; then
+        echo
+        log_info "Performance test results can be found in the output above"
+        log_info "Consider running with --iterations=10 for more accurate performance metrics"
+      fi
+    else
+      echo
+      log_error "Some test suites failed:"
+      for suite in "${FAILED_SUITE_NAMES[@]}"; do
+        echo "  ✗ $suite"
+      done
+      echo
+      log_info "Check the detailed output above for error information"
+      log_info "Run with --verbose for more detailed output"
+      exit 1
+    fi
+    
+    # Cleanup information
+    if [ "$VERBOSE" = true ]; then
+      echo
+      log_info "Test artifacts saved in: $TEMP_DIR"
+      log_info "Run 'rm -rf $TEMP_DIR' to clean up manually"
+    fi
 }
 
 # Show usage information
@@ -457,4 +454,4 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
 fi
 
 # Run main function
-main "$@" 
+main "$@" 2>&1 | tee "$LOG_FILE" 
