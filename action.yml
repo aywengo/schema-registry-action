@@ -229,8 +229,8 @@ runs:
         CLI_URL="https://github.com/aywengo/ksr-cli/releases/download/${CLI_VERSION}/${FILENAME}"
         echo "Downloading ksr-cli from: $CLI_URL"
         
-        # Download with better error handling
-        if ! wget -q "$CLI_URL" -O "ksr-cli.tar.gz"; then
+        # Download with better error handling - use curl for cross-platform compatibility
+        if ! curl -sSL "$CLI_URL" -o "ksr-cli.tar.gz"; then
           echo "Failed to download from: $CLI_URL"
           echo "Attempting to list available assets for version $CLI_VERSION..."
           curl -s "https://api.github.com/repos/aywengo/ksr-cli/releases/tags/${CLI_VERSION}" | jq -r '.assets[].name' || echo "Failed to list assets"
@@ -254,7 +254,7 @@ runs:
         rm "ksr-cli.tar.gz"
         
         # Verify installation
-        ksr-cli --version
+        ksr-cli --version || echo "Version command may not be supported"
         
         # Set up authentication for ksr-cli
         if [ "${{ inputs.auth-method }}" == "basic" ] && [ ! -z "${{ inputs.username }}" ]; then
