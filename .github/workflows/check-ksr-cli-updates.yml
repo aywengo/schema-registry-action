@@ -99,36 +99,38 @@ jobs:
             const latest = '${{ steps.latest-version.outputs.version }}';
             const releaseUrl = '${{ steps.latest-version.outputs.release-url }}';
             
-            const issueBody = `## ksr-cli Update Available
-            
-            A new version of ksr-cli is available. The action currently uses **${current}** but **${latest}** is now available.
-            
-            ### Release Information
-            
-            View the full release notes here: ${releaseUrl}
-            
-            ### Update Instructions
-            
-            To update ksr-cli in this action:
-            
-            1. Update the default \`cli-version\` in \`action.yml\` from \`${current}\` to \`${latest}\`
-            2. Run the test workflows to ensure compatibility
-            3. Update the README.md if there are any breaking changes
-            
-            ### Automated PR Alternative
-            
-            If you have a Personal Access Token (PAT) configured:
-            1. Add a secret named \`WORKFLOW_TOKEN\` with a PAT that has \`repo\` and \`workflow\` permissions
-            2. Update this workflow to use \`\${{ secrets.WORKFLOW_TOKEN }}\` instead of \`\${{ github.token }}\`
-            
-            ### Manual Update Command
-            
-            \`\`\`bash
-            sed -i "s/default: '${current}'/default: '${latest}'/g" action.yml
-            \`\`\`
-            
-            ---
-            *This issue was automatically created by the ksr-cli version check workflow.*`;
+            const issueBody = [
+              '## ksr-cli Update Available',
+              '',
+              `A new version of ksr-cli is available. The action currently uses **${current}** but **${latest}** is now available.`,
+              '',
+              '### Release Information',
+              '',
+              `View the full release notes here: ${releaseUrl}`,
+              '',
+              '### Update Instructions',
+              '',
+              'To update ksr-cli in this action:',
+              '',
+              `1. Update the default \`cli-version\` in \`action.yml\` from \`${current}\` to \`${latest}\``,
+              '2. Run the test workflows to ensure compatibility',
+              '3. Update the README.md if there are any breaking changes',
+              '',
+              '### Automated PR Alternative',
+              '',
+              'If you have a Personal Access Token (PAT) configured:',
+              '1. Add a secret named `WORKFLOW_TOKEN` with a PAT that has `repo` and `workflow` permissions',
+              '2. Update this workflow to use `$' + '{{ secrets.WORKFLOW_TOKEN }}` instead of `$' + '{{ github.token }}`',
+              '',
+              '### Manual Update Command',
+              '',
+              '```bash',
+              `sed -i "s/default: '${current}'/default: '${latest}'/g" action.yml`,
+              '```',
+              '',
+              '---',
+              '*This issue was automatically created by the ksr-cli version check workflow.*'
+            ].join('\n');
             
             const issue = await github.rest.issues.create({
               owner: context.repo.owner,
