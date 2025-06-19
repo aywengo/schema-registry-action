@@ -365,21 +365,40 @@ runs:
               jq --arg status "failure" --arg total "$total_schemas" --arg valid "$valid_schemas" \
                 '.status = $status | .summary = {"total": ($total | tonumber), "valid": ($valid | tonumber), "invalid": (($total | tonumber) - ($valid | tonumber))}' \
                 operation-result.json > tmp.json && mv tmp.json operation-result.json
-              exit 1
+              
+              # Set a marker for the process results step to know validation failed
+              echo "VALIDATION_STATUS=failure" >> $GITHUB_ENV
+              
+              # Only exit with error if fail-on-error is true
+              if [ "${{ inputs.fail-on-error }}" == "true" ]; then
+                exit 1
+              fi
             else
               jq --arg status "success" --arg total "$total_schemas" --arg valid "$valid_schemas" \
                 '.status = $status | .summary = {"total": ($total | tonumber), "valid": ($valid | tonumber), "invalid": 0}' \
                 operation-result.json > tmp.json && mv tmp.json operation-result.json
+              
+              echo "VALIDATION_STATUS=success" >> $GITHUB_ENV
             fi
             ;;
             
           check-compatibility)
             if [ ! -z "${{ inputs.schema-file }}" ] && [ ! -z "${{ inputs.subject }}" ]; then
               echo "Checking compatibility for subject: ${{ inputs.subject }}"
-              ksr-cli check compatibility "${{ inputs.subject }}" --file "${{ inputs.schema-file }}" $CLI_OPTS
+              if ksr-cli check compatibility "${{ inputs.subject }}" --file "${{ inputs.schema-file }}" $CLI_OPTS; then
+                echo "COMPATIBILITY_STATUS=success" >> $GITHUB_ENV
+              else
+                echo "COMPATIBILITY_STATUS=failure" >> $GITHUB_ENV
+                if [ "${{ inputs.fail-on-error }}" == "true" ]; then
+                  exit 1
+                fi
+              fi
             else
               echo "Error: Both schema-file and subject are required for compatibility check"
-              exit 1
+              echo "COMPATIBILITY_STATUS=failure" >> $GITHUB_ENV
+              if [ "${{ inputs.fail-on-error }}" == "true" ]; then
+                exit 1
+              fi
             fi
             ;;
             
@@ -469,8 +488,29 @@ runs:
       if: always()
       shell: bash
       run: |
-        # Capture operation status from previous step
-        OPERATION_STATUS="${{ steps.execute.outcome }}"
+        # Determine operation status based on the operation type and internal logic
+        case "${{ inputs.operation }}" in
+          validate)
+            # Use the validation status set by the validation logic
+            if [ "$VALIDATION_STATUS" == "failure" ]; then
+              OPERATION_STATUS="failure"
+            else
+              OPERATION_STATUS="success"
+            fi
+            ;;
+          check-compatibility)
+            # Use the compatibility status set by the compatibility logic
+            if [ "$COMPATIBILITY_STATUS" == "failure" ]; then
+              OPERATION_STATUS="failure"
+            else
+              OPERATION_STATUS="success"
+            fi
+            ;;
+          *)
+            # For other operations, use the GitHub Actions step outcome
+            OPERATION_STATUS="${{ steps.execute.outcome }}"
+            ;;
+        esac
         
         echo "Operation completed with status: $OPERATION_STATUS"
         echo "operation-status=$OPERATION_STATUS" >> $GITHUB_OUTPUT
