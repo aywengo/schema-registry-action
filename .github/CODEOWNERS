@@ -1,0 +1,37 @@
+# CODEOWNERS for schema-registry-action
+# This file defines who is responsible for code reviews for different parts of the repository.
+# Each line is a file pattern followed by one or more owners.
+# Order matters - the last matching pattern takes precedence.
+
+# Default owner for everything in the repo
+# Unless a later match takes precedence
+* @aywengo
+
+# GitHub Actions workflows are critical - require owner review
+/.github/workflows/ @aywengo
+
+# Action definition is critical - require owner review
+/action.yml @aywengo
+
+# Scripts that power the action
+/scripts/ @aywengo
+
+# Test files
+/tests/ @aywengo
+
+# Example configurations
+/examples/ @aywengo
+
+# Documentation files
+/README.md @aywengo
+/CHANGELOG.md @aywengo
+/CONTRIBUTING.md @aywengo
+/SECURITY.md @aywengo
+/CODE_OF_CONDUCT.md @aywengo
+
+# Dependencies and security-related files
+/.github/dependabot.yml @aywengo
+/.github/CODEOWNERS @aywengo
+
+# License file - requires careful review
+/LICENSE @aywengo
