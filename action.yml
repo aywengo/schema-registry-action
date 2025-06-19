@@ -238,9 +238,21 @@ runs:
         fi
         
         # Extract the tar.gz file (all platforms use tar.gz)
-        tar -xzf "ksr-cli.tar.gz"
+        tar -xzf "ksr-cli.tar.gz" || (echo "Failed to extract archive" && ls -la && exit 1)
         
-        chmod +x "$BINARY_NAME"
+        # Check what was extracted
+        echo "Extracted files:"
+        ls -la
+        
+        # Make binary executable
+        if [ -f "$BINARY_NAME" ]; then
+          chmod +x "$BINARY_NAME"
+        else
+          echo "ERROR: Binary $BINARY_NAME not found after extraction"
+          echo "Archive contents:"
+          tar -tzf "ksr-cli.tar.gz" || echo "Failed to list archive contents"
+          exit 1
+        fi
         
         # Move to appropriate location based on OS
         if [ "$OS" == "windows" ]; then
@@ -248,12 +260,17 @@ runs:
           mkdir -p /usr/local/bin
           mv "$BINARY_NAME" /usr/local/bin/ksr-cli
         else
-          sudo mv "$BINARY_NAME" /usr/local/bin/
+          # For Linux/macOS, try without sudo first (GitHub Actions Ubuntu doesn't need it)
+          mkdir -p "$HOME/.local/bin"
+          mv "$BINARY_NAME" "$HOME/.local/bin/ksr-cli"
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
         fi
         
         rm "ksr-cli.tar.gz"
         
         # Verify installation
+        which ksr-cli || echo "ksr-cli not in PATH"
         ksr-cli --version || echo "Version command may not be supported"
         
         # Set up authentication for ksr-cli
@@ -282,6 +299,9 @@ runs:
       shell: bash
       run: |
         echo "Executing operation: ${{ inputs.operation }} with ksr-cli"
+        
+        # Ensure PATH includes our install location
+        export PATH="$HOME/.local/bin:$PATH"
         
         # Set common CLI options
         CLI_OPTS=""
@@ -427,10 +447,7 @@ runs:
               echo "VALIDATION_STATUS=failure" >> $GITHUB_ENV
               echo "failure" > .validation_status
               
-              # Only exit with error if fail-on-error is true
-              if [ "${{ inputs.fail-on-error }}" == "true" ]; then
-                exit 1
-              fi
+              # Do NOT exit with error here - let the Process Results step handle it
             else
               jq --arg status "success" --arg total "$total_schemas" --arg valid "$valid_schemas" \
                 '.status = $status | .summary = {"total": ($total | tonumber), "valid": ($valid | tonumber), "invalid": 0}' \
@@ -448,16 +465,12 @@ runs:
                 echo "COMPATIBILITY_STATUS=success" >> $GITHUB_ENV
               else
                 echo "COMPATIBILITY_STATUS=failure" >> $GITHUB_ENV
-                if [ "${{ inputs.fail-on-error }}" == "true" ]; then
-                  exit 1
-                fi
+                # Do NOT exit with error here - let the Process Results step handle it
               fi
             else
               echo "Error: Both schema-file and subject are required for compatibility check"
               echo "COMPATIBILITY_STATUS=failure" >> $GITHUB_ENV
-              if [ "${{ inputs.fail-on-error }}" == "true" ]; then
-                exit 1
-              fi
+              # Do NOT exit with error here - let the Process Results step handle it
             fi
             ;;
             
@@ -548,6 +561,9 @@ runs:
       if: always()
       shell: bash
       run: |
+        # Ensure PATH includes our install location
+        export PATH="$HOME/.local/bin:$PATH"
+        
         # Debug: Show environment variables
         echo "Debug: VALIDATION_STATUS=$VALIDATION_STATUS"
         echo "Debug: COMPATIBILITY_STATUS=$COMPATIBILITY_STATUS"
@@ -652,8 +668,13 @@ runs:
             ;;
         esac
         
-        # Check if we should fail
+        # IMPORTANT: Only fail the action if fail-on-error is true
+        # This allows the workflow to continue even when validation fails as expected
         if [ "${{ inputs.fail-on-error }}" == "true" ] && [ "$OPERATION_STATUS" != "success" ]; then
           echo "Operation failed and fail-on-error is enabled!"
           exit 1
+        else
+          # Always exit with success when fail-on-error is false
+          echo "Operation status: $OPERATION_STATUS, fail-on-error: ${{ inputs.fail-on-error }}"
+          exit 0
         fi
