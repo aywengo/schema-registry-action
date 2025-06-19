@@ -401,4 +401,10 @@ main() {
 }
 
 # Run main function
-main "$@" 2>&1 | tee "$LOG_FILE" 
+if [ "${GITHUB_ACTIONS:-false}" = "true" ]; then
+  # In GitHub Actions, redirect to log file for artifact collection
+  main "$@" > "$LOG_FILE" 2>&1
+else
+  # Locally, show output normally
+  main "$@"
+fi 
