@@ -30,7 +30,16 @@ jobs:
         id: current-version
         run: |
           # Extract current version from action.yml
-          CURRENT_VERSION=$(grep -A1 "cli-version:" action.yml | grep "default:" | sed "s/.*default: '\(.*\)'/\1/")
+          # Find the cli-version input block and get its default value
+          CURRENT_VERSION=$(awk '/cli-version:/{f=1} f && /default:/{print $2; exit}' action.yml | tr -d "'")
+          
+          # Verify we got a version
+          if [ -z "$CURRENT_VERSION" ]; then
+            echo "Failed to extract current version, trying alternative method..."
+            # Alternative: look for the specific line with cli-version default
+            CURRENT_VERSION=$(grep -E "^\s*default:\s*'v[0-9]+\.[0-9]+\.[0-9]+'\s*$" action.yml | tail -1 | sed "s/.*default: '\(.*\)'/\1/")
+          fi
+          
           echo "Current ksr-cli version: $CURRENT_VERSION"
           echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
 
@@ -55,6 +64,14 @@ jobs:
         run: |
           CURRENT="${{ steps.current-version.outputs.version }}"
           LATEST="${{ steps.latest-version.outputs.version }}"
+          
+          echo "Comparing current='$CURRENT' with latest='$LATEST'"
+          
+          if [ -z "$CURRENT" ]; then
+            echo "ERROR: Could not determine current version"
+            echo "needs-update=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
           
           if [ "$CURRENT" = "$LATEST" ]; then
             echo "ksr-cli is up to date ($CURRENT)"
@@ -85,15 +102,30 @@ jobs:
       - name: Update ksr-cli version in action.yml
         if: steps.compare.outputs.needs-update == 'true' && steps.check-pr.outputs.pr-exists == 'false' && github.event.inputs.dry-run != 'true'
         run: |
+          CURRENT="${{ steps.current-version.outputs.version }}"
           LATEST="${{ steps.latest-version.outputs.version }}"
           
           # Update the default cli-version in action.yml
-          sed -i "s/default: '[^']*' # cli-version/default: '$LATEST' # cli-version/g" action.yml
-          sed -i "/cli-version:/,/default:/ s/default: '[^']*'/default: '$LATEST'/" action.yml
+          # Use a more specific pattern to avoid updating other default values
+          sed -i "/cli-version:/,/^\s*default:/ s/default: '$CURRENT'/default: '$LATEST'/" action.yml
           
           # Verify the change
           echo "Updated action.yml:"
-          grep -A2 "cli-version:" action.yml
+          grep -A5 "cli-version:" action.yml | grep "default:"
+
+      - name: Read release notes for PR body
+        if: steps.compare.outputs.needs-update == 'true' && steps.check-pr.outputs.pr-exists == 'false' && github.event.inputs.dry-run != 'true'
+        id: read-notes
+        run: |
+          if [ -f release-notes.txt ]; then
+            # Escape special characters and limit length
+            CONTENT=$(cat release-notes.txt | head -100)
+            echo "content<<EOF" >> $GITHUB_OUTPUT
+            echo "$CONTENT" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "content=No release notes available." >> $GITHUB_OUTPUT
+          fi
 
       - name: Create Pull Request
         if: steps.compare.outputs.needs-update == 'true' && steps.check-pr.outputs.pr-exists == 'false' && github.event.inputs.dry-run != 'true'
@@ -132,19 +164,6 @@ jobs:
             ksr-cli-update
             automated
           reviewers: aywengo
-
-      - name: Read release notes for PR body
-        if: steps.compare.outputs.needs-update == 'true' && steps.check-pr.outputs.pr-exists == 'false' && github.event.inputs.dry-run != 'true'
-        id: read-notes
-        run: |
-          if [ -f release-notes.txt ]; then
-            CONTENT=$(cat release-notes.txt)
-            echo "content<<EOF" >> $GITHUB_OUTPUT
-            echo "$CONTENT" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-          else
-            echo "content=No release notes available." >> $GITHUB_OUTPUT
-          fi
 
       - name: Summary
         if: always()
