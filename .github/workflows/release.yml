@@ -109,16 +109,24 @@ jobs:
           if [ -f "CHANGELOG.md" ]; then
             echo "Found CHANGELOG.md, extracting content..."
             
-            # Use sed instead of awk to avoid YAML escaping issues
-            # Extract lines between version header and next version header
-            sed -n "/^## \[*${VERSION_NO_V}\]*.*$/,/^## \[*[0-9]/p" CHANGELOG.md | sed '$d' > release_notes.md
+            # Use grep and tail instead of sed to avoid YAML issues
+            # Find the start line of our version
+            START_LINE=$(grep -n "^## \[*${VERSION_NO_V}\]*" CHANGELOG.md | head -1 | cut -d: -f1)
             
-            # Remove the version header itself
-            sed -i '1d' release_notes.md
-            
-            # Check if we found any content
-            if [ ! -s release_notes.md ]; then
-              echo "No specific version content found in CHANGELOG.md"
+            if [ -n "$START_LINE" ]; then
+              # Find the next version line after our version
+              NEXT_LINE=$(tail -n +$((START_LINE + 1)) CHANGELOG.md | grep -n "^## \[*[0-9]" | head -1 | cut -d: -f1)
+              
+              if [ -n "$NEXT_LINE" ]; then
+                # Extract content between versions (excluding headers)
+                END_LINE=$((START_LINE + NEXT_LINE - 1))
+                sed -n "$((START_LINE + 1)),$((END_LINE))p" CHANGELOG.md > release_notes.md
+              else
+                # Extract from version to end of file (excluding header)
+                tail -n +$((START_LINE + 1)) CHANGELOG.md > release_notes.md
+              fi
+            else
+              echo "Version $VERSION_NO_V not found in CHANGELOG.md"
               echo "## Changes" > release_notes.md
               echo "See [CHANGELOG.md](./CHANGELOG.md) for details." >> release_notes.md
             fi
