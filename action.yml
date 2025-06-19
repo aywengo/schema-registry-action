@@ -136,31 +136,31 @@ inputs:
 outputs:
   validation-result:
     description: 'Result of schema validation'
-    value: ${{ steps.execute.outputs.validation-result }}
+    value: ${{ steps.process-results.outputs.validation-result }}
     
   compatibility-result:
     description: 'Result of compatibility check'
-    value: ${{ steps.execute.outputs.compatibility-result }}
+    value: ${{ steps.process-results.outputs.compatibility-result }}
     
   deployed-schemas:
     description: 'List of deployed schemas'
-    value: ${{ steps.execute.outputs.deployed-schemas }}
+    value: ${{ steps.process-results.outputs.deployed-schemas }}
     
   schema-diff:
     description: 'Differences between schemas'
-    value: ${{ steps.execute.outputs.schema-diff }}
+    value: ${{ steps.process-results.outputs.schema-diff }}
     
   export-path:
     description: 'Path to exported schemas'
-    value: ${{ steps.execute.outputs.export-path }}
+    value: ${{ steps.process-results.outputs.export-path }}
     
   operation-status:
     description: 'Status of the operation (success/failure)'
-    value: ${{ steps.execute.outputs.operation-status }}
+    value: ${{ steps.process-results.outputs.operation-status }}
     
   error-message:
     description: 'Error message if operation failed'
-    value: ${{ steps.execute.outputs.error-message }}
+    value: ${{ steps.process-results.outputs.error-message }}
 
 runs:
   using: 'composite'
@@ -324,7 +324,8 @@ runs:
             total_schemas=0
             valid_schemas=0
             
-            for schema_file in ${{ inputs.schemas-path }}/*.{avsc,json,proto}; do
+            # Use find instead of shell globbing for better cross-platform compatibility
+            while IFS= read -r schema_file; do
               if [ -f "$schema_file" ]; then
                 total_schemas=$((total_schemas + 1))
                 echo "Validating $schema_file"
@@ -404,7 +405,7 @@ runs:
                         operation-result.json > tmp.json && mv tmp.json operation-result.json
                     fi
                   fi
-                else
+                elif [[ "$schema_file" =~ \.proto$ ]]; then
                   echo "✓ $schema_file (basic validation)"
                   valid_schemas=$((valid_schemas + 1))
                   
@@ -414,7 +415,7 @@ runs:
                     operation-result.json > tmp.json && mv tmp.json operation-result.json
                 fi
               fi
-            done
+            done < <(find "${{ inputs.schemas-path }}" -type f \( -name "*.avsc" -o -name "*.json" -o -name "*.proto" \))
             
             # Update final status
             if [ "$validation_failed" = true ]; then
@@ -438,7 +439,7 @@ runs:
               echo "VALIDATION_STATUS=success" >> $GITHUB_ENV  
               echo "success" > .validation_status
             fi
-            ;;
+            ;; 
             
           check-compatibility)
             if [ ! -z "${{ inputs.schema-file }}" ] && [ ! -z "${{ inputs.subject }}" ]; then
@@ -466,7 +467,7 @@ runs:
               echo "Dry run mode - schemas will not be deployed"
             fi
             
-            for schema_file in ${{ inputs.schemas-path }}/*.{avsc,json}; do
+            while IFS= read -r schema_file; do
               if [ -f "$schema_file" ]; then
                 # Extract subject name from filename
                 subject=$(basename "$schema_file" | sed 's/\.[^.]*$//')
@@ -490,7 +491,7 @@ runs:
                   echo "Dry run: Would deploy $schema_file as subject $subject"
                 fi
               fi
-            done
+            done < <(find "${{ inputs.schemas-path }}" -type f \( -name "*.avsc" -o -name "*.json" \))
             ;;
             
           compare)
@@ -513,7 +514,7 @@ runs:
               ksr-cli export subjects -f "$output_path" $CLI_OPTS
             fi
             
-            echo "export-path=$output_path" >> $GITHUB_OUTPUT
+            echo "EXPORT_PATH=$output_path" >> $GITHUB_ENV
             ;;
             
           lint)
@@ -521,13 +522,13 @@ runs:
             echo "ksr-cli performs basic validation during schema operations"
             # Fallback to validation
             echo "Performing basic schema validation instead..."
-            for schema_file in ${{ inputs.schemas-path }}/*.{avsc,json}; do
+            while IFS= read -r schema_file; do
               if [ -f "$schema_file" ]; then
                 echo "Validating $schema_file"
                 subject=$(basename "$schema_file" | sed 's/\.[^.]*$//')
                 ksr-cli check compatibility "$subject" --file "$schema_file" $CLI_OPTS || echo "Validation failed for $schema_file"
               fi
-            done
+            done < <(find "${{ inputs.schemas-path }}" -type f \( -name "*.avsc" -o -name "*.json" \))
             ;;
             
           generate-docs)
@@ -543,6 +544,7 @@ runs:
         esac
         
     - name: Process Results
+      id: process-results
       if: always()
       shell: bash
       run: |
@@ -577,6 +579,14 @@ runs:
               OPERATION_STATUS="success"
             fi
             ;;
+          export)
+            # For export, check if the export path was set
+            if [ -n "$EXPORT_PATH" ]; then
+              OPERATION_STATUS="success"
+            else
+              OPERATION_STATUS="${{ steps.execute.outcome }}"
+            fi
+            ;;
           *)
             # For other operations, use the GitHub Actions step outcome
             OPERATION_STATUS="${{ steps.execute.outcome }}"
@@ -591,6 +601,7 @@ runs:
         echo "compatibility-result=" >> $GITHUB_OUTPUT
         echo "deployed-schemas=" >> $GITHUB_OUTPUT
         echo "schema-diff=" >> $GITHUB_OUTPUT
+        echo "export-path=" >> $GITHUB_OUTPUT
         
         # Set operation-specific outputs based on the operation performed
         case "${{ inputs.operation }}" in
@@ -625,7 +636,10 @@ runs:
             ;;
             
           export)
-            # export-path is already set in the execute step
+            # Set export-path output
+            if [ -n "$EXPORT_PATH" ]; then
+              echo "export-path=$EXPORT_PATH" >> $GITHUB_OUTPUT
+            fi
             if [ "$OPERATION_STATUS" != "success" ]; then
               echo "error-message=Schema export failed" >> $GITHUB_OUTPUT
             fi
