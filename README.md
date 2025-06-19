@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![CI](https://github.com/aywengo/schema-registry-action/workflows/CI/badge.svg)](https://github.com/aywengo/schema-registry-action/actions)
 
-A GitHub Action for automating Schema Registry operations in your CI/CD pipeline. Supports Confluent Schema Registry, AWS Glue Schema Registry, and other compatible implementations.
+A GitHub Action for automating Schema Registry operations in your CI/CD pipeline using the powerful ksr-cli tool. Supports Confluent Schema Registry, AWS Glue Schema Registry, and other compatible implementations.
 
 ## Features
 

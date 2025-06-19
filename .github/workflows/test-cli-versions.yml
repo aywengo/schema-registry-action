@@ -6,7 +6,6 @@ on:
     paths:
       - 'action.yml'
       - '.github/workflows/test-cli-versions.yml'
-      - 'scripts/**'
   pull_request:
     branches: [ main ]
   schedule:

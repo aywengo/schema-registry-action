@@ -20,18 +20,17 @@ jobs:
           fi
           yq eval action.yml > /dev/null
           
-          # Ensure all required scripts exist
-          if [ ! -f "scripts/validate.sh" ]; then
-            echo "Missing required script: scripts/validate.sh"
+          # Validate action.yml contains ksr-cli references
+          if ! grep -q "ksr-cli" action.yml; then
+            echo "action.yml should reference ksr-cli"
             exit 1
           fi
           
-          # Basic shell script syntax check
-          for script in scripts/*.sh; do
-            if [ -f "$script" ]; then
-              bash -n "$script" || exit 1
-            fi
-          done
+          # Verify action.yml has required operations
+          if ! grep -q "operation.*validate\|check-compatibility\|deploy\|export" action.yml; then
+            echo "action.yml missing required operations"
+            exit 1
+          fi
           
           echo "✅ All validations passed"
 
@@ -54,7 +53,7 @@ jobs:
         uses: lewagon/wait-on-check-action@v1.3.4
         with:
           ref: ${{ github.ref }}
-          check-name: 'Schema Registry Scripts Tests'
+          check-name: 'Schema Registry Action Tests'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           wait-interval: 10
 

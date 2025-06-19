@@ -279,65 +279,13 @@ except Exception as e:
   fi
 }
 
-# Script-specific test function
+# Script-specific test function (deprecated - scripts removed in favor of ksr-cli)
 run_script_test() {
   local script_name="$1"
   
-  log_info "Testing script: $script_name"
-  
-  local script_path="$SCRIPT_DIR/scripts/${script_name}.sh"
-  
-  if [ ! -f "$script_path" ]; then
-    log_error "Script not found: $script_path"
-    return 1
-  fi
-  
-  # Make script executable
-  chmod +x "$script_path"
-  
-  # Test basic script execution (help/usage)
-  log_info "Testing $script_name script help..."
-  if ! bash "$script_path" --help >/dev/null 2>&1; then
-    # Try without --help flag for basic validation
-    if ! bash "$script_path" >/dev/null 2>&1; then
-      log_warning "$script_name script failed basic execution test"
-    fi
-  fi
-  
-  # Test script with dummy data
-  case "$script_name" in
-    validate)
-      mkdir -p "$TEMP_DIR/test-schemas"
-      cp "$TEMP_DIR/shared-schemas"/*.avsc "$TEMP_DIR/test-schemas/" 2>/dev/null || true
-      if bash "$script_path" --path "$TEMP_DIR/test-schemas" --type avro; then
-        log_success "$script_name validation test passed"
-      else
-        log_warning "$script_name validation test completed with issues"
-      fi
-      ;;
-    lint)
-      mkdir -p "$TEMP_DIR/test-schemas"
-      cp "$TEMP_DIR/shared-schemas"/*.avsc "$TEMP_DIR/test-schemas/" 2>/dev/null || true
-      if bash "$script_path" --path "$TEMP_DIR/test-schemas"; then
-        log_success "$script_name lint test passed"
-      else
-        log_warning "$script_name lint test completed with issues"
-      fi
-      ;;
-    *)
-      log_info "Running $script_name with basic test..."
-      # Run script with minimal args or dry-run
-      if bash "$script_path" --dry-run 2>/dev/null; then
-        log_success "$script_name dry-run test passed"
-      elif bash "$script_path" --help 2>/dev/null; then
-        log_success "$script_name help test passed"
-      else
-        log_warning "$script_name test completed with warnings"
-      fi
-      ;;
-  esac
-  
-  log_success "$script_name script test completed"
+  log_info "Script testing deprecated: $script_name"
+  log_info "All operations now use ksr-cli directly in action.yml"
+  log_success "No scripts to test - using ksr-cli natively"
 }
 
 # Main test execution

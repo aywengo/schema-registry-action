@@ -266,11 +266,30 @@ runs:
         case "${{ inputs.operation }}" in
           validate)
             echo "Validating schemas in ${{ inputs.schemas-path }}"
-            # Use custom validation script that creates operation-result.json
-            "$GITHUB_ACTION_PATH/scripts/validate.sh" \
-              --path "${{ inputs.schemas-path }}" \
-              --type "${{ inputs.schema-type }}" \
-              --output-format "${{ inputs.output-format }}"
+            
+            # Validate each schema file using ksr-cli
+            validation_failed=false
+            for schema_file in ${{ inputs.schemas-path }}/*.{avsc,json,proto}; do
+              if [ -f "$schema_file" ]; then
+                echo "Validating $schema_file"
+                
+                # Extract subject name from filename
+                subject=$(basename "$schema_file" | sed 's/\.[^.]*$//')
+                if [ ! -z "${{ inputs.subject-prefix }}" ]; then
+                  subject="${{ inputs.subject-prefix }}$subject"
+                fi
+                
+                # Use ksr-cli to validate the schema (dry-run compatibility check)
+                if ! ksr-cli check compatibility "$subject" --file "$schema_file" --dry-run $CLI_OPTS; then
+                  echo "Validation failed for $schema_file"
+                  validation_failed=true
+                fi
+              fi
+            done
+            
+            if [ "$validation_failed" = true ]; then
+              exit 1
+            fi
             ;;
             
           check-compatibility)
