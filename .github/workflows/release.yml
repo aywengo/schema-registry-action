@@ -109,9 +109,12 @@ jobs:
           if [ -f "CHANGELOG.md" ]; then
             echo "Found CHANGELOG.md, extracting content..."
             
-            # Use a simpler approach that's more reliable
-            # Try to extract content between this version and previous version
-            awk '/^## \[?'${VERSION_NO_V}'\]?/{flag=1; next} /^## \[?[0-9]/{flag=0} flag' CHANGELOG.md > release_notes.md
+            # Use sed instead of awk to avoid YAML escaping issues
+            # Extract lines between version header and next version header
+            sed -n "/^## \[*${VERSION_NO_V}\]*.*$/,/^## \[*[0-9]/p" CHANGELOG.md | sed '$d' > release_notes.md
+            
+            # Remove the version header itself
+            sed -i '1d' release_notes.md
             
             # Check if we found any content
             if [ ! -s release_notes.md ]; then
@@ -121,18 +124,18 @@ jobs:
             fi
           else
             echo "No CHANGELOG.md found, generating default release notes"
-            cat > release_notes.md << EOF
-## 🚀 Schema Registry Action ${GITHUB_REF#refs/tags/}
+            cat > release_notes.md << 'EOF'
+## 🚀 Schema Registry Action Release
 
 This release includes improvements and bug fixes.
 
 ### Usage
-\`\`\`yaml
-- uses: ${{ github.repository }}@${{ steps.version.outputs.major_version }}
+```yaml
+- uses: aywengo/schema-registry-action@v1
   with:
     operation: 'validate'
     schemas-path: './schemas'
-\`\`\`
+```
 EOF
           fi
           
