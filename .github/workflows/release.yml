@@ -41,19 +41,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      # Wait for Test workflow (from test.yml)
-      - name: Wait for Test workflow
+      # Wait for basic Test workflow (from test.yml)
+      - name: Wait for basic Test workflow
         uses: lewagon/wait-on-check-action@v1.3.4
         with:
           ref: ${{ github.ref }}
-          check-name: 'Test'  # Fixed: was 'test', should be 'Test'
+          check-name: 'test'  # Fixed: should be 'test' (lowercase)
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           wait-interval: 10
-          allowed-conclusions: success,skipped  # Allow skipped if not triggered
+          allowed-conclusions: success,skipped
           
-      # Note: Schema Registry Action Tests workflow only runs on branch pushes,
-      # not tag pushes, so we shouldn't wait for it during releases.
-      # If you want to ensure tests run before tagging, run them on the branch first.
+      # Wait for Schema Registry Action Tests workflow matrix jobs
+      - name: Wait for unit tests
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.ref }}
+          check-name: 'test (unit)'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
+          allowed-conclusions: success,skipped
+          
+      - name: Wait for integration tests
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.ref }}
+          check-name: 'test (integration)'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
+          allowed-conclusions: success,skipped
+          
+      - name: Wait for performance tests
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.ref }}
+          check-name: 'test (performance)'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
+          allowed-conclusions: success,skipped
       
       - name: Verify tag is on main branch
         run: |
