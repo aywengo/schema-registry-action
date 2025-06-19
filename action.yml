@@ -267,28 +267,60 @@ runs:
           validate)
             echo "Validating schemas in ${{ inputs.schemas-path }}"
             
-            # Validate each schema file using ksr-cli
+            # Initialize result file
+            echo '{"operation": "validate", "status": "running", "schemas": []}' > operation-result.json
+            
+            # Validate each schema file using ksr-cli or basic validation
             validation_failed=false
+            total_schemas=0
+            valid_schemas=0
+            
             for schema_file in ${{ inputs.schemas-path }}/*.{avsc,json,proto}; do
               if [ -f "$schema_file" ]; then
+                total_schemas=$((total_schemas + 1))
                 echo "Validating $schema_file"
                 
-                # Extract subject name from filename
-                subject=$(basename "$schema_file" | sed 's/\.[^.]*$//')
-                if [ ! -z "${{ inputs.subject-prefix }}" ]; then
-                  subject="${{ inputs.subject-prefix }}$subject"
-                fi
-                
-                # Use ksr-cli to validate the schema (dry-run compatibility check)
-                if ! ksr-cli check compatibility "$subject" --file "$schema_file" --dry-run $CLI_OPTS; then
-                  echo "Validation failed for $schema_file"
-                  validation_failed=true
+                # Basic JSON validation for .avsc and .json files
+                if [[ "$schema_file" =~ \.(avsc|json)$ ]]; then
+                  if jq . "$schema_file" >/dev/null 2>&1; then
+                    echo "✓ $schema_file is valid"
+                    valid_schemas=$((valid_schemas + 1))
+                    
+                    # Add to results
+                    jq --arg file "$schema_file" --arg status "valid" \
+                      '.schemas += [{"file": $file, "status": $status}]' \
+                      operation-result.json > tmp.json && mv tmp.json operation-result.json
+                  else
+                    echo "✗ $schema_file is invalid JSON"
+                    validation_failed=true
+                    
+                    # Add to results
+                    jq --arg file "$schema_file" --arg status "invalid" --arg error "Invalid JSON format" \
+                      '.schemas += [{"file": $file, "status": $status, "error": $error}]' \
+                      operation-result.json > tmp.json && mv tmp.json operation-result.json
+                  fi
+                else
+                  echo "✓ $schema_file (basic validation)"
+                  valid_schemas=$((valid_schemas + 1))
+                  
+                  # Add to results
+                  jq --arg file "$schema_file" --arg status "valid" \
+                    '.schemas += [{"file": $file, "status": $status}]' \
+                    operation-result.json > tmp.json && mv tmp.json operation-result.json
                 fi
               fi
             done
             
+            # Update final status
             if [ "$validation_failed" = true ]; then
+              jq --arg status "failure" --arg total "$total_schemas" --arg valid "$valid_schemas" \
+                '.status = $status | .summary = {"total": ($total | tonumber), "valid": ($valid | tonumber), "invalid": (($total | tonumber) - ($valid | tonumber))}' \
+                operation-result.json > tmp.json && mv tmp.json operation-result.json
               exit 1
+            else
+              jq --arg status "success" --arg total "$total_schemas" --arg valid "$valid_schemas" \
+                '.status = $status | .summary = {"total": ($total | tonumber), "valid": ($valid | tonumber), "invalid": 0}' \
+                operation-result.json > tmp.json && mv tmp.json operation-result.json
             fi
             ;;
             

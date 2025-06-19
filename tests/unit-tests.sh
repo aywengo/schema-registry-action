@@ -13,11 +13,14 @@ TEMP_DIR="$(mktemp -d)"
 # Test framework
 source "$TEST_DIR/test-framework.sh"
 
-# Parse arguments
+  # Parse arguments
+# VERBOSE=false  # Set but potentially unused - keep for argument parsing
+VERBOSE=false
 while [[ $# -gt 0 ]]; do
   case $1 in
     --verbose)
       VERBOSE=true
+      export VERBOSE  # Export for use in sourced scripts
       shift
       ;;
     --function=*)
@@ -40,7 +43,9 @@ cleanup() {
   log_verbose "Cleaning up temporary directory: $TEMP_DIR"
   rm -rf "$TEMP_DIR"
   # Stop mock server if running
+  # shellcheck disable=SC2236
   if [ ! -z "${MOCK_SERVER_PID:-}" ]; then
+    # shellcheck disable=SC2086
     kill $MOCK_SERVER_PID 2>/dev/null || true
   fi
   # Ensure log file exists for artifact upload
@@ -365,6 +370,7 @@ main() {
     log_info "Test directory: $TEMP_DIR"
     
     # Run specific function if provided
+    # shellcheck disable=SC2236
     if [ ! -z "$SPECIFIC_FUNCTION" ]; then
       if declare -f "$SPECIFIC_FUNCTION" > /dev/null; then
         "$SPECIFIC_FUNCTION"
@@ -387,7 +393,7 @@ main() {
     log_info "Test Results Summary"
     echo "========================================"
     
-    if [ $FAILED_TESTS -eq 0 ]; then
+    if [ "$FAILED_TESTS" -eq 0 ]; then
       log_success "All $TOTAL_TESTS tests passed!"
     else
       log_error "$FAILED_TESTS out of $TOTAL_TESTS tests failed"

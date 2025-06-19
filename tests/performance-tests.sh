@@ -4,20 +4,22 @@ set -e
 # Performance tests for ksr-cli GitHub Action
 # Usage: ./performance-tests.sh [--verbose] [--iterations=<num>]
 
-VERBOSE=false
+# VERBOSE=false  # Set but potentially unused - keep for argument parsing
 ITERATIONS=10
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"  # Currently unused but kept for future use
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMP_DIR="$(mktemp -d)"
 
 # Test framework
 source "$TEST_DIR/test-framework.sh"
 
-# Parse arguments
+  # Parse arguments
+VERBOSE=false
 while [[ $# -gt 0 ]]; do
   case $1 in
     --verbose)
       VERBOSE=true
+      export VERBOSE  # Export for use in sourced scripts
       shift
       ;;
     --iterations=*)
@@ -35,12 +37,14 @@ done
 LOG_FILE="/tmp/test_performance_output.log"
 touch "$LOG_FILE"
 
-# Cleanup function
+  # Cleanup function
 cleanup() {
   log_verbose "Cleaning up temporary directory: $TEMP_DIR"
   rm -rf "$TEMP_DIR"
   # Stop mock server if running
+  # shellcheck disable=SC2236
   if [ ! -z "${MOCK_SERVER_PID:-}" ]; then
+    # shellcheck disable=SC2086
     kill $MOCK_SERVER_PID 2>/dev/null || true
   fi
   # Ensure log file exists for artifact upload
@@ -58,18 +62,21 @@ measure_execution_time() {
   
   log_info "Measuring execution time: $description"
   
-  for i in $(seq 1 $ITERATIONS); do
+  for i in $(seq 1 "$ITERATIONS"); do
     log_verbose "Iteration $i/$ITERATIONS"
     
-    local start_time=$(date +%s.%N)
+    local start_time
+    start_time=$(date +%s.%N)
+    local end_time
     if eval "$command" >/dev/null 2>&1; then
-      local end_time=$(date +%s.%N)
+      end_time=$(date +%s.%N)
     else
-      local end_time=$(date +%s.%N)
+      end_time=$(date +%s.%N)
       log_warning "Command failed in iteration $i"
     fi
     
-    local duration=$(echo "$end_time - $start_time" | bc -l 2>/dev/null || python3 -c "print($end_time - $start_time)")
+    local duration
+    duration=$(echo "$end_time - $start_time" | bc -l 2>/dev/null || python3 -c "print($end_time - $start_time)")
     times+=("$duration")
   done
   
@@ -88,7 +95,8 @@ measure_execution_time() {
     fi
   done
   
-  local avg=$(echo "scale=3; $total / $ITERATIONS" | bc -l 2>/dev/null || python3 -c "print(round($total / $ITERATIONS, 3))")
+  local avg
+  avg=$(echo "scale=3; $total / $ITERATIONS" | bc -l 2>/dev/null || python3 -c "print(round($total / $ITERATIONS, 3))")
   
   echo "Results for: $description"
   echo "  Iterations: $ITERATIONS"
@@ -127,6 +135,7 @@ install_ksr_cli() {
   esac
   
   # Get latest version
+  local CLI_VERSION
   CLI_VERSION=$(curl -s https://api.github.com/repos/aywengo/ksr-cli/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
   if [ -z "$CLI_VERSION" ]; then
     CLI_VERSION="v0.2.3"
@@ -160,7 +169,7 @@ create_large_schema_set() {
   
   mkdir -p "$base_dir"
   
-  for i in $(seq 1 $schema_count); do
+  for i in $(seq 1 "$schema_count"); do
     cat > "$base_dir/schema_${i}.avsc" << EOF
 {
   "type": "record",
@@ -200,8 +209,8 @@ create_complex_schema() {
   "fields": [
 EOF
   
-  for i in $(seq 1 $field_count); do
-    if [ $i -eq $field_count ]; then
+  for i in $(seq 1 "$field_count"); do
+    if [ "$i" -eq "$field_count" ]; then
       echo "    {\"name\": \"field${i}\", \"type\": \"string\", \"doc\": \"Field ${i}\"}" >> "$filename"
     else
       echo "    {\"name\": \"field${i}\", \"type\": \"string\", \"doc\": \"Field ${i}\"}," >> "$filename"
@@ -420,7 +429,8 @@ test_bulk_operations_performance() {
   fi
   
   # Create large schema set
-  local large_dir=$(create_large_schema_set 50)
+  local large_dir
+  large_dir=$(create_large_schema_set 50)
   
   if start_mock_registry; then
     # Test bulk schema deployment simulation

@@ -80,7 +80,8 @@ test_case() {
   log_verbose "Command: $test_command"
   
   # Create temporary output file
-  local output_file="$(mktemp)"
+  local output_file
+  output_file="$(mktemp)"
   
   # Execute test command
   if eval "$test_command" > "$output_file" 2>&1; then
@@ -97,7 +98,7 @@ test_case() {
     
     if [ "${VERBOSE:-false}" = true ]; then
       echo "  Output:"
-      cat "$output_file" | sed 's/^/  /'
+      sed 's/^/  /' "$output_file"
     fi
   else
     FAILED_TESTS=$((FAILED_TESTS + 1))
@@ -108,7 +109,7 @@ test_case() {
     if [ "${VERBOSE:-false}" = true ]; then
       echo "  Command: $test_command"
       echo "  Output:"
-      cat "$output_file" | sed 's/^/  /'
+      sed 's/^/  /' "$output_file"
     fi
   fi
   
@@ -195,7 +196,7 @@ assert_json_has_key() {
 # Mock functions for testing
 mock_curl() {
   local url="$1"
-  local method="${2:-GET}"
+  # local method="${2:-GET}"  # Currently unused but kept for future use
   
   case "$url" in
     */subjects)
@@ -236,6 +237,7 @@ setup_test_environment() {
 }
 
 cleanup_test_environment() {
+  # shellcheck disable=SC2236
   if [ ! -z "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
     rm -rf "$TEMP_DIR"
   fi
@@ -244,7 +246,8 @@ cleanup_test_environment() {
 # Show test results
 show_test_results() {
   # Show final suite results
-  if [ ! -z "$CURRENT_SUITE" ]; then
+  # shellcheck disable=SC2236
+  if [ -n "$CURRENT_SUITE" ]; then
     echo
     if [ $SUITE_FAILED -eq 0 ]; then
       log_success "Suite '$CURRENT_SUITE': $SUITE_PASSED/$SUITE_TESTS tests passed"
@@ -280,13 +283,16 @@ show_test_results() {
 # Performance testing utilities
 time_command() {
   local command="$1"
-  local start_time=$(date +%s.%N)
+  local start_time
+  start_time=$(date +%s.%N)
   
   eval "$command"
   local exit_code=$?
   
-  local end_time=$(date +%s.%N)
-  local duration=$(echo "$end_time - $start_time" | bc -l 2>/dev/null || echo "0")
+  local end_time
+  end_time=$(date +%s.%N)
+  local duration
+  duration=$(echo "$end_time - $start_time" | bc -l 2>/dev/null || echo "0")
   
   echo "Command took ${duration}s"
   return $exit_code
@@ -299,7 +305,7 @@ wait_for_condition() {
   local interval="${3:-1}"
   
   local elapsed=0
-  while [ $elapsed -lt $timeout ]; do
+  while [ $elapsed -lt "$timeout" ]; do
     if eval "$condition"; then
       return 0
     fi
@@ -355,7 +361,7 @@ EOF
 # HTTP server utilities for integration testing
 start_test_http_server() {
   local port="${1:-8080}"
-  local response_file="${2:-/dev/null}"
+  # local response_file="${2:-/dev/null}"  # Currently unused but kept for future use
   
   # Simple HTTP server for testing
   python3 -c "
@@ -390,7 +396,7 @@ except KeyboardInterrupt:
 " &
   
   local server_pid=$!
-  echo $server_pid > "$TEMP_DIR/test_server.pid"
+  echo "$server_pid" > "$TEMP_DIR/test_server.pid"
   
   # Wait for server to start
   sleep 2
@@ -400,8 +406,9 @@ except KeyboardInterrupt:
 
 stop_test_http_server() {
   if [ -f "$TEMP_DIR/test_server.pid" ]; then
-    local pid=$(cat "$TEMP_DIR/test_server.pid")
-    kill $pid 2>/dev/null || true
+    local pid
+    pid=$(cat "$TEMP_DIR/test_server.pid")
+    kill "$pid" 2>/dev/null || true
     rm -f "$TEMP_DIR/test_server.pid"
   fi
 }
@@ -433,11 +440,13 @@ files_similar() {
   local threshold="${3:-95}"
   
   # Simple similarity check using diff
-  local total_lines=$(wc -l < "$file1")
-  local diff_lines=$(diff "$file1" "$file2" | wc -l)
+  local total_lines
+  total_lines=$(wc -l < "$file1")
+  local diff_lines
+  diff_lines=$(diff "$file1" "$file2" | wc -l)
   local similarity=$((100 - (diff_lines * 100 / total_lines)))
   
-  [ $similarity -ge $threshold ]
+  [ $similarity -ge "$threshold" ]
 }
 
 # Export all functions for use in test scripts

@@ -10,8 +10,8 @@ jobs:
       
       - name: Create test schemas
         run: |
-          mkdir -p test/schemas/avro
-          cat > test/schemas/avro/user-events.avsc << EOF
+          mkdir -p test/schemas
+          cat > test/schemas/user-events.avsc << EOF
           {
             "namespace": "com.example",
             "type": "record",
@@ -30,12 +30,28 @@ jobs:
           operation: 'validate'
           schemas-path: './test/schemas'
           
+      - name: Install jq for JSON processing
+        run: |
+          sudo apt-get update && sudo apt-get install -y jq
+          
       - name: Verify validation output
         run: |
+          echo "Checking for operation result file..."
           if [ -f operation-result.json ]; then
+            echo "✅ Found operation-result.json"
+            echo "Content:"
             cat operation-result.json
-            jq -e '.status == "success"' operation-result.json
+            echo ""
+            echo "Verifying status..."
+            if jq -e '.status == "success"' operation-result.json > /dev/null; then
+              echo "✅ Validation completed successfully"
+            else
+              echo "❌ Validation failed"
+              exit 1
+            fi
           else
-            echo "No operation result found"
+            echo "❌ No operation result found"
+            echo "Contents of current directory:"
+            ls -la
             exit 1
           fi

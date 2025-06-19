@@ -101,26 +101,29 @@ run_test_suite() {
   log_info "Running $test_name..."
   echo "========================================"
   
-  local start_time=$(date +%s)
+  local start_time
+  start_time=$(date +%s)
   
   # Create log file name for GitHub Actions artifact upload
   local log_filename="/tmp/test_${test_name// /_}.log"
   
+  local exit_code
   if [ "$VERBOSE" = true ]; then
-    if bash "$test_script" --verbose $test_args 2>&1 | tee "$log_filename"; then
-      local exit_code=0
+    if bash "$test_script" --verbose "$test_args" 2>&1 | tee "$log_filename"; then
+      exit_code=0
     else
-      local exit_code=$?
+      exit_code=$?
     fi
   else
-    if bash "$test_script" $test_args 2>&1 | tee "$TEMP_DIR/${test_name}.log" "$log_filename"; then
-      local exit_code=0
+    if bash "$test_script" "$test_args" 2>&1 | tee "$TEMP_DIR/${test_name}.log" "$log_filename"; then
+      exit_code=0
     else
-      local exit_code=$?
+      exit_code=$?
     fi
   fi
   
-  local end_time=$(date +%s)
+  local end_time
+  end_time=$(date +%s)
   local duration=$((end_time - start_time))
   
   if [ $exit_code -eq 0 ]; then
