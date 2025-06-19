@@ -15,6 +15,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  issues: write
 
 jobs:
   check-ksr-cli-version:
@@ -46,7 +47,7 @@ jobs:
           echo "Release notes:"
           echo "$RELEASE_NOTES"
           
-          # Save release notes to file for PR body
+          # Save release notes to file for later use
           echo "$RELEASE_NOTES" > release-notes.txt
 
       - name: Compare versions
@@ -63,9 +64,9 @@ jobs:
             echo "needs-update=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Check for existing PR
+      - name: Check for existing PR or Issue
         if: steps.compare.outputs.needs-update == 'true'
-        id: check-pr
+        id: check-existing
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -80,70 +81,72 @@ jobs:
             echo "No existing PR found for version $LATEST"
             echo "pr-exists=false" >> $GITHUB_OUTPUT
           fi
+          
+          # Also check for existing issues
+          ISSUE_EXISTS=$(gh issue list --state open --label "ksr-cli-update" --json title | jq -r ".[] | select(.title | contains(\"$LATEST\")) | .title" | wc -l)
+          
+          if [ "$ISSUE_EXISTS" -gt "0" ]; then
+            echo "Issue already exists for version $LATEST"
+            echo "issue-exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "No existing issue found for version $LATEST"
+            echo "issue-exists=false" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Update ksr-cli version in action.yml
-        if: steps.compare.outputs.needs-update == 'true' && steps.check-pr.outputs.pr-exists == 'false' && github.event.inputs.dry-run != 'true'
+      - name: Create Issue for Manual Update
+        if: steps.compare.outputs.needs-update == 'true' && steps.check-existing.outputs.pr-exists == 'false' && steps.check-existing.outputs.issue-exists == 'false' && github.event.inputs.dry-run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          CURRENT="${{ steps.current-version.outputs.version }}"
           LATEST="${{ steps.latest-version.outputs.version }}"
           
-          # Update the default cli-version in action.yml
-          sed -i "s/default: '[^']*' # cli-version/default: '$LATEST' # cli-version/g" action.yml
-          sed -i "/cli-version:/,/default:/ s/default: '[^']*'/default: '$LATEST'/" action.yml
-          
-          # Verify the change
-          echo "Updated action.yml:"
-          grep -A2 "cli-version:" action.yml
-
-      - name: Create Pull Request
-        if: steps.compare.outputs.needs-update == 'true' && steps.check-pr.outputs.pr-exists == 'false' && github.event.inputs.dry-run != 'true'
-        uses: peter-evans/create-pull-request@v6
-        with:
-          token: ${{ github.token }}
-          commit-message: "chore: update ksr-cli to ${{ steps.latest-version.outputs.version }}"
-          branch: update-ksr-cli-${{ steps.latest-version.outputs.version }}
-          delete-branch: true
-          title: "chore: update ksr-cli to ${{ steps.latest-version.outputs.version }}"
-          body: |
-            ## Description
-            This PR updates the default ksr-cli version from `${{ steps.current-version.outputs.version }}` to `${{ steps.latest-version.outputs.version }}`.
-
-            ## Release Notes for ${{ steps.latest-version.outputs.version }}
-            ${{ steps.read-notes.outputs.content }}
-
-            ## Changes
-            - Updated the default `cli-version` in `action.yml`
-
-            ## Testing
-            Please ensure that:
-            - [ ] The action continues to work with the new ksr-cli version
-            - [ ] All example workflows still function correctly
-            - [ ] No breaking changes affect existing users
-
-            ## Notes
-            - This PR was automatically created by the ksr-cli version check workflow
-            - Users can still specify their preferred version using the `cli-version` input
-            - The `latest` option will always fetch the most recent version regardless of this default
-
-            ---
-            *This is an automated pull request. Please review the changes and test before merging.*
-          labels: |
-            dependencies
-            ksr-cli-update
-            automated
-          reviewers: aywengo
-
-      - name: Read release notes for PR body
-        if: steps.compare.outputs.needs-update == 'true' && steps.check-pr.outputs.pr-exists == 'false' && github.event.inputs.dry-run != 'true'
-        id: read-notes
-        run: |
+          # Read release notes
+          RELEASE_NOTES=""
           if [ -f release-notes.txt ]; then
-            CONTENT=$(cat release-notes.txt)
-            echo "content<<EOF" >> $GITHUB_OUTPUT
-            echo "$CONTENT" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-          else
-            echo "content=No release notes available." >> $GITHUB_OUTPUT
+            RELEASE_NOTES=$(cat release-notes.txt)
           fi
+          
+          # Create issue body
+          cat > issue-body.md << EOF
+          ## ksr-cli Update Available
+          
+          A new version of ksr-cli is available. The action currently uses **$CURRENT** but **$LATEST** is now available.
+          
+          ### Release Notes for $LATEST
+          
+          $RELEASE_NOTES
+          
+          ### Update Instructions
+          
+          To update ksr-cli in this action:
+          
+          1. Update the default \`cli-version\` in \`action.yml\` from \`$CURRENT\` to \`$LATEST\`
+          2. Run the test workflows to ensure compatibility
+          3. Update the README.md if there are any breaking changes
+          
+          ### Automated PR Alternative
+          
+          If you have a Personal Access Token (PAT) configured:
+          1. Add a secret named \`WORKFLOW_TOKEN\` with a PAT that has \`repo\` and \`workflow\` permissions
+          2. Update this workflow to use \`\${{ secrets.WORKFLOW_TOKEN }}\` instead of \`\${{ github.token }}\`
+          
+          ### Manual Update Command
+          
+          \`\`\`bash
+          sed -i "s/default: '$CURRENT'/default: '$LATEST'/g" action.yml
+          \`\`\`
+          
+          ---
+          *This issue was automatically created by the ksr-cli version check workflow.*
+          EOF
+          
+          # Create the issue
+          gh issue create \
+            --title "chore: update ksr-cli to $LATEST" \
+            --body-file issue-body.md \
+            --label "dependencies,ksr-cli-update,automated" \
+            --assignee aywengo
 
       - name: Summary
         if: always()
@@ -154,14 +157,20 @@ jobs:
           echo "- **Latest version:** ${{ steps.latest-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Update needed:** ${{ steps.compare.outputs.needs-update }}" >> $GITHUB_STEP_SUMMARY
           if [ "${{ steps.compare.outputs.needs-update }}" = "true" ]; then
-            echo "- **Existing PR:** ${{ steps.check-pr.outputs.pr-exists }}" >> $GITHUB_STEP_SUMMARY
-            if [ "${{ github.event.inputs.dry-run }}" = "true" ]; then
-              echo "- **Action:** Dry run - no PR created" >> $GITHUB_STEP_SUMMARY
-            elif [ "${{ steps.check-pr.outputs.pr-exists }}" = "true" ]; then
+            if [ "${{ steps.check-existing.outputs.pr-exists }}" = "true" ]; then
               echo "- **Action:** PR already exists, skipping creation" >> $GITHUB_STEP_SUMMARY
+            elif [ "${{ steps.check-existing.outputs.issue-exists }}" = "true" ]; then
+              echo "- **Action:** Issue already exists, skipping creation" >> $GITHUB_STEP_SUMMARY
+            elif [ "${{ github.event.inputs.dry-run }}" = "true" ]; then
+              echo "- **Action:** Dry run - no issue created" >> $GITHUB_STEP_SUMMARY
             else
-              echo "- **Action:** PR created to update ksr-cli" >> $GITHUB_STEP_SUMMARY
+              echo "- **Action:** Issue created for manual update" >> $GITHUB_STEP_SUMMARY
             fi
           else
             echo "- **Action:** No action needed - ksr-cli is up to date" >> $GITHUB_STEP_SUMMARY
           fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Note on Automated PRs" >> $GITHUB_STEP_SUMMARY
+          echo "GitHub Actions default token cannot create PRs that trigger other workflows." >> $GITHUB_STEP_SUMMARY
+          echo "To enable automated PR creation, configure a Personal Access Token (PAT) as described in the created issue." >> $GITHUB_STEP_SUMMARY
