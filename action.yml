@@ -422,8 +422,9 @@ runs:
                 '.status = $status | .summary = {"total": ($total | tonumber), "valid": ($valid | tonumber), "invalid": (($total | tonumber) - ($valid | tonumber))}' \
                 operation-result.json > tmp.json && mv tmp.json operation-result.json
               
-              # Set a marker for the process results step to know validation failed
+              # Set markers for the process results step to know validation failed
               echo "VALIDATION_STATUS=failure" >> $GITHUB_ENV
+              echo "failure" > .validation_status
               
               # Only exit with error if fail-on-error is true
               if [ "${{ inputs.fail-on-error }}" == "true" ]; then
@@ -434,7 +435,8 @@ runs:
                 '.status = $status | .summary = {"total": ($total | tonumber), "valid": ($valid | tonumber), "invalid": 0}' \
                 operation-result.json > tmp.json && mv tmp.json operation-result.json
               
-              echo "VALIDATION_STATUS=success" >> $GITHUB_ENV
+              echo "VALIDATION_STATUS=success" >> $GITHUB_ENV  
+              echo "success" > .validation_status
             fi
             ;;
             
@@ -544,12 +546,25 @@ runs:
       if: always()
       shell: bash
       run: |
+        # Debug: Show environment variables
+        echo "Debug: VALIDATION_STATUS=$VALIDATION_STATUS"
+        echo "Debug: COMPATIBILITY_STATUS=$COMPATIBILITY_STATUS"
+        echo "Debug: Execute step outcome: ${{ steps.execute.outcome }}"
+        
         # Determine operation status based on the operation type and internal logic
         case "${{ inputs.operation }}" in
           validate)
             # Use the validation status set by the validation logic
+            # Try environment variable first, then fallback to file
             if [ "$VALIDATION_STATUS" == "failure" ]; then
               OPERATION_STATUS="failure"
+            elif [ -f ".validation_status" ]; then
+              file_status=$(cat .validation_status)
+              if [ "$file_status" == "failure" ]; then
+                OPERATION_STATUS="failure"
+              else
+                OPERATION_STATUS="success"
+              fi
             else
               OPERATION_STATUS="success"
             fi
@@ -586,6 +601,7 @@ runs:
               echo "validation-result=Schema validation failed" >> $GITHUB_OUTPUT
               echo "error-message=One or more schemas failed validation" >> $GITHUB_OUTPUT
             fi
+            echo "Debug: Set validation-result and operation-status outputs"
             ;;
             
           check-compatibility)
