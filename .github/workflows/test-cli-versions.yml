@@ -176,38 +176,6 @@ jobs:
           schemas-path: ./valid-schemas
           cli-version: ${{ matrix.cli-version }}
 
-      - name: Setup mock Schema Registry
-        if: matrix.os == 'ubuntu-latest'
-        shell: bash
-        run: |
-          # Use a mock server or skip actual registry tests on non-Linux
-          # For now, we'll create a marker file to indicate mock mode
-          touch .mock-registry
-
-      - name: Test export operation
-        id: test-export
-        if: matrix.os == 'ubuntu-latest'
-        uses: ./
-        continue-on-error: true
-        with:
-          operation: export
-          registry-url: http://localhost:8081
-          output-path: ./exported-schemas.json
-          cli-version: ${{ matrix.cli-version }}
-          fail-on-error: false
-
-      - name: Test with specific schema file
-        id: test-single-schema
-        uses: ./
-        continue-on-error: true
-        with:
-          operation: check-compatibility
-          schema-file: ./valid-schemas/user-v2.avsc
-          subject: com.example.User
-          registry-url: http://localhost:8081
-          cli-version: ${{ matrix.cli-version }}
-          fail-on-error: false
-
       - name: Verify CLI version used
         shell: bash
         run: |
@@ -219,6 +187,7 @@ jobs:
             where ksr-cli 2>nul || echo "ksr-cli not found in PATH"
             ksr-cli --version 2>nul || echo "Version command not supported or ksr-cli not found"
           else
+            export PATH="$HOME/.local/bin:$PATH"
             which ksr-cli || echo "ksr-cli not found in PATH"
             ksr-cli --version || echo "Version command not supported"
           fi
@@ -232,8 +201,6 @@ jobs:
           echo "### Test Results:" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ Schema validation (invalid): Expected failure occurred" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ steps.test-validate-valid.outcome == 'success' && '✅' || '❌' }} Schema validation (valid)" >> $GITHUB_STEP_SUMMARY
-          echo "- ${{ steps.test-export.outcome == 'success' && '✅' || '⚠️' }} Export operation (may fail without registry)" >> $GITHUB_STEP_SUMMARY
-          echo "- ${{ steps.test-single-schema.outcome == 'success' && '✅' || '⚠️' }} Single schema compatibility (may fail without registry)" >> $GITHUB_STEP_SUMMARY
 
   integration-test:
     needs: test-cli-version
@@ -354,6 +321,17 @@ jobs:
           echo "Exported schemas:"
           cat ./exported.json | jq '.' || cat ./exported.json
 
+      - name: Test with specific schema file
+        id: test-single-schema  
+        uses: ./
+        with:
+          operation: check-compatibility
+          schema-file: ./integration-schemas/product.avsc
+          subject: com.example.Product
+          registry-url: http://localhost:8081
+          cli-version: latest
+          fail-on-error: false
+
       - name: Integration test summary
         if: always()
         run: |
@@ -363,6 +341,7 @@ jobs:
           echo "- ${{ steps.deploy-latest.outcome == 'success' && '✅' || '❌' }} Deploy with latest CLI" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ steps.deploy-default.outcome == 'success' && '✅' || '❌' }} Deploy with default CLI" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ steps.export.outcome == 'success' && '✅' || '❌' }} Export schemas" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ steps.test-single-schema.outcome == 'success' && '✅' || '❌' }} Single schema compatibility check" >> $GITHUB_STEP_SUMMARY
 
   compatibility-report:
     needs: [test-cli-version, integration-test]
