@@ -329,17 +329,10 @@ runs:
                 total_schemas=$((total_schemas + 1))
                 echo "Validating $schema_file"
                 
-                # Basic JSON validation for .avsc and .json files
+                # Validate .avsc and .json files
                 if [[ "$schema_file" =~ \.(avsc|json)$ ]]; then
-                  if jq . "$schema_file" >/dev/null 2>&1; then
-                    echo "✓ $schema_file is valid"
-                    valid_schemas=$((valid_schemas + 1))
-                    
-                    # Add to results
-                    jq --arg file "$schema_file" --arg status "valid" \
-                      '.schemas += [{"file": $file, "status": $status}]' \
-                      operation-result.json > tmp.json && mv tmp.json operation-result.json
-                  else
+                  # First check if it's valid JSON
+                  if ! jq . "$schema_file" >/dev/null 2>&1; then
                     echo "✗ $schema_file is invalid JSON"
                     validation_failed=true
                     
@@ -347,6 +340,69 @@ runs:
                     jq --arg file "$schema_file" --arg status "invalid" --arg error "Invalid JSON format" \
                       '.schemas += [{"file": $file, "status": $status, "error": $error}]' \
                       operation-result.json > tmp.json && mv tmp.json operation-result.json
+                  else
+                    # For .avsc files, do additional Avro schema validation
+                    if [[ "$schema_file" =~ \.avsc$ ]]; then
+                      # Check if it has required Avro schema fields
+                      schema_type=$(jq -r '.type // empty' "$schema_file")
+                      if [ -z "$schema_type" ]; then
+                        echo "✗ $schema_file missing required 'type' field"
+                        validation_failed=true
+                        
+                        # Add to results
+                        jq --arg file "$schema_file" --arg status "invalid" --arg error "Missing required 'type' field" \
+                          '.schemas += [{"file": $file, "status": $status, "error": $error}]' \
+                          operation-result.json > tmp.json && mv tmp.json operation-result.json
+                      elif [ "$schema_type" == "record" ]; then
+                        # For record types, check required fields
+                        schema_name=$(jq -r '.name // empty' "$schema_file")
+                        schema_fields=$(jq -r '.fields // empty' "$schema_file")
+                        
+                        if [ -z "$schema_name" ]; then
+                          echo "✗ $schema_file record missing required 'name' field"
+                          validation_failed=true
+                          
+                          # Add to results
+                          jq --arg file "$schema_file" --arg status "invalid" --arg error "Record missing required 'name' field" \
+                            '.schemas += [{"file": $file, "status": $status, "error": $error}]' \
+                            operation-result.json > tmp.json && mv tmp.json operation-result.json
+                        elif [ -z "$schema_fields" ] || [ "$schema_fields" == "null" ]; then
+                          echo "✗ $schema_file record missing required 'fields' array"
+                          validation_failed=true
+                          
+                          # Add to results
+                          jq --arg file "$schema_file" --arg status "invalid" --arg error "Record missing required 'fields' array" \
+                            '.schemas += [{"file": $file, "status": $status, "error": $error}]' \
+                            operation-result.json > tmp.json && mv tmp.json operation-result.json
+                        else
+                          echo "✓ $schema_file is valid"
+                          valid_schemas=$((valid_schemas + 1))
+                          
+                          # Add to results
+                          jq --arg file "$schema_file" --arg status "valid" \
+                            '.schemas += [{"file": $file, "status": $status}]' \
+                            operation-result.json > tmp.json && mv tmp.json operation-result.json
+                        fi
+                      else
+                        # For non-record types, basic validation is sufficient
+                        echo "✓ $schema_file is valid"
+                        valid_schemas=$((valid_schemas + 1))
+                        
+                        # Add to results
+                        jq --arg file "$schema_file" --arg status "valid" \
+                          '.schemas += [{"file": $file, "status": $status}]' \
+                          operation-result.json > tmp.json && mv tmp.json operation-result.json
+                      fi
+                    else
+                      # For .json files, basic JSON validation is sufficient
+                      echo "✓ $schema_file is valid JSON"
+                      valid_schemas=$((valid_schemas + 1))
+                      
+                      # Add to results
+                      jq --arg file "$schema_file" --arg status "valid" \
+                        '.schemas += [{"file": $file, "status": $status}]' \
+                        operation-result.json > tmp.json && mv tmp.json operation-result.json
+                    fi
                   fi
                 else
                   echo "✓ $schema_file (basic validation)"
