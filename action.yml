@@ -169,11 +169,15 @@ runs:
       id: setup
       shell: bash
       run: |
+        echo "::group::Setting up ksr-cli"
         echo "Setting up ksr-cli (Kafka Schema Registry CLI)..."
         
         # Determine OS and architecture
         OS_RAW=$(uname -s)
         ARCH=$(uname -m)
+        
+        echo "Detected OS: $OS_RAW"
+        echo "Detected Architecture: $ARCH"
         
         # Map OS to the correct naming convention used by ksr-cli releases
         case $OS_RAW in
@@ -206,15 +210,21 @@ runs:
             ;;
         esac
         
+        echo "Mapped OS: $OS"
+        echo "Mapped Architecture: $ARCH"
+        
         # Set CLI version
         CLI_VERSION="${{ inputs.cli-version }}"
         if [ "$CLI_VERSION" == "latest" ]; then
+          echo "Fetching latest version..."
           CLI_VERSION=$(curl -s https://api.github.com/repos/aywengo/ksr-cli/releases/latest | jq -r '.tag_name')
           if [ -z "$CLI_VERSION" ] || [ "$CLI_VERSION" == "null" ]; then
             echo "Failed to fetch latest version, falling back to default"
             CLI_VERSION="v0.2.3"
           fi
         fi
+        
+        echo "CLI Version: $CLI_VERSION"
         
         # Construct filename based on OS - Windows includes .exe in the archive name
         if [ "$OS" == "windows" ]; then
@@ -225,6 +235,9 @@ runs:
           BINARY_NAME="ksr-cli"
         fi
         
+        echo "Expected filename: $FILENAME"
+        echo "Expected binary name: $BINARY_NAME"
+        
         # Construct download URL
         CLI_URL="https://github.com/aywengo/ksr-cli/releases/download/${CLI_VERSION}/${FILENAME}"
         echo "Downloading ksr-cli from: $CLI_URL"
@@ -232,76 +245,111 @@ runs:
         # Download with better error handling - use curl for cross-platform compatibility
         if ! curl -sSL "$CLI_URL" -o "ksr-cli.tar.gz"; then
           echo "Failed to download from: $CLI_URL"
+          echo "HTTP response:"
+          curl -I "$CLI_URL"
           echo "Attempting to list available assets for version $CLI_VERSION..."
           curl -s "https://api.github.com/repos/aywengo/ksr-cli/releases/tags/${CLI_VERSION}" | jq -r '.assets[].name' || echo "Failed to list assets"
           exit 1
         fi
         
+        echo "Download successful, file size: $(ls -lh ksr-cli.tar.gz | awk '{print $5}')"
+        
         # Extract the tar.gz file (all platforms use tar.gz)
-        tar -xzf "ksr-cli.tar.gz" || (echo "Failed to extract archive" && ls -la && exit 1)
+        echo "Extracting archive..."
+        if ! tar -xzf "ksr-cli.tar.gz"; then
+          echo "Failed to extract archive"
+          echo "Archive type:"
+          file ksr-cli.tar.gz
+          echo "Trying to list contents:"
+          tar -tzf "ksr-cli.tar.gz" || echo "Failed to list archive contents"
+          exit 1
+        fi
         
         # Check what was extracted
         echo "Extracted files:"
         ls -la
         
-        # Make binary executable
+        # Find the actual binary name (might be different than expected)
+        echo "Looking for ksr-cli binary..."
+        ACTUAL_BINARY=""
         if [ -f "$BINARY_NAME" ]; then
-          chmod +x "$BINARY_NAME"
+          ACTUAL_BINARY="$BINARY_NAME"
+        elif [ -f "ksr-cli" ]; then
+          ACTUAL_BINARY="ksr-cli"
+        elif [ -f "ksr-cli.exe" ]; then
+          ACTUAL_BINARY="ksr-cli.exe"
         else
-          echo "ERROR: Binary $BINARY_NAME not found after extraction"
-          echo "Archive contents:"
-          tar -tzf "ksr-cli.tar.gz" || echo "Failed to list archive contents"
+          echo "ERROR: Binary not found after extraction"
+          echo "Looking for any executable files:"
+          find . -type f -executable -ls 2>/dev/null || find . -type f -ls
           exit 1
         fi
+        
+        echo "Found binary: $ACTUAL_BINARY"
+        
+        # Make binary executable
+        chmod +x "$ACTUAL_BINARY"
         
         # Move to appropriate location based on OS
         if [ "$OS" == "windows" ]; then
           # On Windows in GitHub Actions, use a location that's in PATH
           mkdir -p /usr/local/bin
-          mv "$BINARY_NAME" /usr/local/bin/ksr-cli
+          mv "$ACTUAL_BINARY" /usr/local/bin/ksr-cli
+          echo "Installed to: /usr/local/bin/ksr-cli"
         else
-          # For Linux/macOS, try without sudo first (GitHub Actions Ubuntu doesn't need it)
+          # For Linux/macOS, use user local bin
           mkdir -p "$HOME/.local/bin"
-          mv "$BINARY_NAME" "$HOME/.local/bin/ksr-cli"
+          mv "$ACTUAL_BINARY" "$HOME/.local/bin/ksr-cli"
+          echo "Installed to: $HOME/.local/bin/ksr-cli"
+          
+          # Add to PATH for current step
           export PATH="$HOME/.local/bin:$PATH"
+          
+          # Add to PATH for subsequent steps
           echo "$HOME/.local/bin" >> $GITHUB_PATH
         fi
         
-        rm "ksr-cli.tar.gz"
+        # Clean up
+        rm -f "ksr-cli.tar.gz"
         
         # Verify installation
-        which ksr-cli || echo "ksr-cli not in PATH"
-        ksr-cli --version || echo "Version command may not be supported"
+        echo "Verifying installation..."
+        echo "Current PATH: $PATH"
         
-        # Set up authentication for ksr-cli
-        if [ "${{ inputs.auth-method }}" == "basic" ] && [ ! -z "${{ inputs.username }}" ]; then
-          echo "Setting up basic authentication for ksr-cli..."
-          export KSR_USERNAME="${{ inputs.username }}"
-          export KSR_PASSWORD="${{ inputs.password }}"
-        elif [ "${{ inputs.auth-method }}" == "api-key" ] && [ ! -z "${{ inputs.api-key }}" ]; then
-          echo "Setting up API key authentication for ksr-cli..."
-          export KSR_API_KEY="${{ inputs.api-key }}"
-          if [ ! -z "${{ inputs.api-secret }}" ]; then
-            export KSR_API_SECRET="${{ inputs.api-secret }}"
-          fi
-        elif [ "${{ inputs.auth-method }}" == "oauth" ] && [ ! -z "${{ inputs.token }}" ]; then
-          echo "Setting up OAuth authentication for ksr-cli..."
-          export KSR_TOKEN="${{ inputs.token }}"
+        if [ "$OS" != "windows" ]; then
+          export PATH="$HOME/.local/bin:$PATH"
         fi
         
-        # Set registry URL
-        if [ ! -z "${{ inputs.registry-url }}" ]; then
-          export KSR_REGISTRY_URL="${{ inputs.registry-url }}"
+        echo "Which ksr-cli:"
+        which ksr-cli || echo "ksr-cli not found in PATH"
+        
+        echo "Direct execution test:"
+        if [ "$OS" == "windows" ]; then
+          /usr/local/bin/ksr-cli --version || echo "Direct execution failed"
+        else
+          "$HOME/.local/bin/ksr-cli" --version || echo "Direct execution failed"
         fi
+        
+        echo "PATH execution test:"
+        ksr-cli --version || echo "PATH execution failed"
+        
+        echo "::endgroup::"
         
     - name: Execute Operation with ksr-cli
       id: execute
       shell: bash
       run: |
+        echo "::group::Execute Operation"
         echo "Executing operation: ${{ inputs.operation }} with ksr-cli"
         
         # Ensure PATH includes our install location
-        export PATH="$HOME/.local/bin:$PATH"
+        if [ "$(uname -s)" != "MINGW"* ] && [ "$(uname -s)" != "CYGWIN"* ] && [ "$(uname -s)" != "MSYS"* ]; then
+          export PATH="$HOME/.local/bin:$PATH"
+        fi
+        
+        echo "Current PATH: $PATH"
+        echo "Checking ksr-cli availability:"
+        which ksr-cli || echo "ksr-cli not found in PATH"
         
         # Set common CLI options
         CLI_OPTS=""
@@ -336,6 +384,15 @@ runs:
           validate)
             echo "Validating schemas in ${{ inputs.schemas-path }}"
             
+            # Check if schemas path exists
+            if [ ! -d "${{ inputs.schemas-path }}" ]; then
+              echo "ERROR: Schemas path does not exist: ${{ inputs.schemas-path }}"
+              exit 1
+            fi
+            
+            echo "Files in schemas path:"
+            ls -la "${{ inputs.schemas-path }}"
+            
             # Initialize result file
             echo '{"operation": "validate", "status": "running", "schemas": []}' > operation-result.json
             
@@ -345,6 +402,9 @@ runs:
             valid_schemas=0
             
             # Use find instead of shell globbing for better cross-platform compatibility
+            echo "Looking for schema files..."
+            find "${{ inputs.schemas-path }}" -type f \( -name "*.avsc" -o -name "*.json" -o -name "*.proto" \) -print
+            
             while IFS= read -r schema_file; do
               if [ -f "$schema_file" ]; then
                 total_schemas=$((total_schemas + 1))
@@ -437,6 +497,8 @@ runs:
               fi
             done < <(find "${{ inputs.schemas-path }}" -type f \( -name "*.avsc" -o -name "*.json" -o -name "*.proto" \))
             
+            echo "Validation complete. Total: $total_schemas, Valid: $valid_schemas"
+            
             # Update final status
             if [ "$validation_failed" = true ]; then
               jq --arg status "failure" --arg total "$total_schemas" --arg valid "$valid_schemas" \
@@ -447,7 +509,7 @@ runs:
               echo "VALIDATION_STATUS=failure" >> $GITHUB_ENV
               echo "failure" > .validation_status
               
-              # Do NOT exit with error here - let the Process Results step handle it
+              echo "Validation failed - some schemas are invalid"
             else
               jq --arg status "success" --arg total "$total_schemas" --arg valid "$valid_schemas" \
                 '.status = $status | .summary = {"total": ($total | tonumber), "valid": ($valid | tonumber), "invalid": 0}' \
@@ -455,7 +517,12 @@ runs:
               
               echo "VALIDATION_STATUS=success" >> $GITHUB_ENV  
               echo "success" > .validation_status
+              
+              echo "All schemas are valid"
             fi
+            
+            echo "Final operation result:"
+            cat operation-result.json
             ;; 
             
           check-compatibility)
@@ -465,12 +532,10 @@ runs:
                 echo "COMPATIBILITY_STATUS=success" >> $GITHUB_ENV
               else
                 echo "COMPATIBILITY_STATUS=failure" >> $GITHUB_ENV
-                # Do NOT exit with error here - let the Process Results step handle it
               fi
             else
               echo "Error: Both schema-file and subject are required for compatibility check"
               echo "COMPATIBILITY_STATUS=failure" >> $GITHUB_ENV
-              # Do NOT exit with error here - let the Process Results step handle it
             fi
             ;;
             
@@ -556,18 +621,31 @@ runs:
             ;;
         esac
         
+        echo "::endgroup::"
+        
     - name: Process Results
       id: process-results
       if: always()
       shell: bash
       run: |
+        echo "::group::Process Results"
+        
         # Ensure PATH includes our install location
-        export PATH="$HOME/.local/bin:$PATH"
+        if [ "$(uname -s)" != "MINGW"* ] && [ "$(uname -s)" != "CYGWIN"* ] && [ "$(uname -s)" != "MSYS"* ]; then
+          export PATH="$HOME/.local/bin:$PATH"
+        fi
         
         # Debug: Show environment variables
         echo "Debug: VALIDATION_STATUS=$VALIDATION_STATUS"
         echo "Debug: COMPATIBILITY_STATUS=$COMPATIBILITY_STATUS"
         echo "Debug: Execute step outcome: ${{ steps.execute.outcome }}"
+        
+        # Check if validation status file exists
+        if [ -f ".validation_status" ]; then
+          echo "Validation status file contents: $(cat .validation_status)"
+        else
+          echo "No validation status file found"
+        fi
         
         # Determine operation status based on the operation type and internal logic
         case "${{ inputs.operation }}" in
@@ -576,15 +654,20 @@ runs:
             # Try environment variable first, then fallback to file
             if [ "$VALIDATION_STATUS" == "failure" ]; then
               OPERATION_STATUS="failure"
+              echo "Setting operation status to failure based on VALIDATION_STATUS env var"
             elif [ -f ".validation_status" ]; then
               file_status=$(cat .validation_status)
+              echo "Validation status from file: $file_status"
               if [ "$file_status" == "failure" ]; then
                 OPERATION_STATUS="failure"
+                echo "Setting operation status to failure based on file"
               else
                 OPERATION_STATUS="success"
+                echo "Setting operation status to success based on file"
               fi
             else
               OPERATION_STATUS="success"
+              echo "Setting operation status to success (default)"
             fi
             ;;
           check-compatibility)
@@ -609,7 +692,7 @@ runs:
             ;;
         esac
         
-        echo "Operation completed with status: $OPERATION_STATUS"
+        echo "Final operation status: $OPERATION_STATUS"
         echo "operation-status=$OPERATION_STATUS" >> $GITHUB_OUTPUT
         
         # Set default values for outputs
@@ -624,11 +707,12 @@ runs:
           validate)
             if [ "$OPERATION_STATUS" == "success" ]; then
               echo "validation-result=All schemas are valid" >> $GITHUB_OUTPUT
+              echo "Setting validation-result output: All schemas are valid"
             else
               echo "validation-result=Schema validation failed" >> $GITHUB_OUTPUT
               echo "error-message=One or more schemas failed validation" >> $GITHUB_OUTPUT
+              echo "Setting validation-result output: Schema validation failed"
             fi
-            echo "Debug: Set validation-result and operation-status outputs"
             ;;
             
           check-compatibility)
@@ -668,13 +752,17 @@ runs:
             ;;
         esac
         
+        echo "::endgroup::"
+        
         # IMPORTANT: Only fail the action if fail-on-error is true
         # This allows the workflow to continue even when validation fails as expected
+        echo "Checking if should fail: fail-on-error=${{ inputs.fail-on-error }}, operation-status=$OPERATION_STATUS"
+        
         if [ "${{ inputs.fail-on-error }}" == "true" ] && [ "$OPERATION_STATUS" != "success" ]; then
-          echo "Operation failed and fail-on-error is enabled!"
+          echo "Operation failed and fail-on-error is enabled - exiting with code 1"
           exit 1
         else
           # Always exit with success when fail-on-error is false
-          echo "Operation status: $OPERATION_STATUS, fail-on-error: ${{ inputs.fail-on-error }}"
+          echo "Exiting with code 0 (fail-on-error=${{ inputs.fail-on-error }})"
           exit 0
         fi
