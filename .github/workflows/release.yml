@@ -102,49 +102,28 @@ jobs:
       - name: Generate release notes
         id: release_notes
         run: |
-          # Extract changelog content for this version with better error handling
+          # Simple approach - just use the existing CHANGELOG content or generate default
           VERSION_NO_V=${GITHUB_REF#refs/tags/v}
           echo "Looking for version: $VERSION_NO_V"
           
           if [ -f "CHANGELOG.md" ]; then
-            echo "Found CHANGELOG.md, extracting content..."
-            
-            # Use grep and tail instead of sed to avoid YAML issues
-            # Find the start line of our version
-            START_LINE=$(grep -n "^## \[*${VERSION_NO_V}\]*" CHANGELOG.md | head -1 | cut -d: -f1)
-            
-            if [ -n "$START_LINE" ]; then
-              # Find the next version line after our version
-              NEXT_LINE=$(tail -n +$((START_LINE + 1)) CHANGELOG.md | grep -n "^## \[*[0-9]" | head -1 | cut -d: -f1)
-              
-              if [ -n "$NEXT_LINE" ]; then
-                # Extract content between versions (excluding headers)
-                END_LINE=$((START_LINE + NEXT_LINE - 1))
-                sed -n "$((START_LINE + 1)),$((END_LINE))p" CHANGELOG.md > release_notes.md
-              else
-                # Extract from version to end of file (excluding header)
-                tail -n +$((START_LINE + 1)) CHANGELOG.md > release_notes.md
-              fi
-            else
-              echo "Version $VERSION_NO_V not found in CHANGELOG.md"
-              echo "## Changes" > release_notes.md
-              echo "See [CHANGELOG.md](./CHANGELOG.md) for details." >> release_notes.md
-            fi
+            echo "Found CHANGELOG.md, using it as reference"
+            echo "## Release Notes" > release_notes.md
+            echo "" >> release_notes.md
+            echo "See [CHANGELOG.md](./CHANGELOG.md) for detailed changes in version $VERSION_NO_V." >> release_notes.md
           else
             echo "No CHANGELOG.md found, generating default release notes"
-            cat > release_notes.md << 'EOF'
-## 🚀 Schema Registry Action Release
-
-This release includes improvements and bug fixes.
-
-### Usage
-```yaml
-- uses: aywengo/schema-registry-action@v1
-  with:
-    operation: 'validate'
-    schemas-path: './schemas'
-```
-EOF
+            echo "## 🚀 Schema Registry Action ${GITHUB_REF#refs/tags/}" > release_notes.md
+            echo "" >> release_notes.md
+            echo "This release includes improvements and bug fixes." >> release_notes.md
+            echo "" >> release_notes.md
+            echo "### Usage" >> release_notes.md
+            echo '```yaml' >> release_notes.md
+            echo "- uses: ${{ github.repository }}@${{ steps.version.outputs.major_version }}" >> release_notes.md
+            echo "  with:" >> release_notes.md
+            echo "    operation: 'validate'" >> release_notes.md
+            echo "    schemas-path: './schemas'" >> release_notes.md
+            echo '```' >> release_notes.md
           fi
           
           echo "Generated release notes:"
