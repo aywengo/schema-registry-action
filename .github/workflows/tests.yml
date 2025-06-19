@@ -3,6 +3,7 @@ name: Schema Registry Action Tests
 on:
   push:
     branches: [ main, develop ]
+    tags: [ 'v*' ]  # Added: Run tests on tag pushes too
     paths: 
       - 'action.yml'
       - 'tests/**'
@@ -183,7 +184,7 @@ jobs:
           exit 1
         fi
         
-                 echo "Security scan completed - no dangerous patterns found"
+        echo "Security scan completed - no dangerous patterns found"
     
     - name: Check for hardcoded secrets
       run: |
@@ -240,4 +241,4 @@ jobs:
         echo "| Action Tests | ${{ needs.action-tests.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Cross Platform | ${{ needs.cross-platform.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Security | ${{ needs.security.result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Documentation | ${{ needs.docs.result }} |" >> $GITHUB_STEP_SUMMARY 
+        echo "| Documentation | ${{ needs.docs.result }} |" >> $GITHUB_STEP_SUMMARY
