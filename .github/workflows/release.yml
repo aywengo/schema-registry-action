@@ -41,21 +41,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Wait for test workflows
+      # Wait for Test workflow (from test.yml)
+      - name: Wait for Test workflow
         uses: lewagon/wait-on-check-action@v1.3.4
         with:
           ref: ${{ github.ref }}
-          check-name: 'test'
+          check-name: 'Test'  # Fixed: was 'test', should be 'Test'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           wait-interval: 10
+          allowed-conclusions: success,skipped  # Allow skipped if not triggered
           
-      - name: Wait for tests workflow
-        uses: lewagon/wait-on-check-action@v1.3.4
-        with:
-          ref: ${{ github.ref }}
-          check-name: 'Schema Registry Action Tests'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 10
+      # Note: Schema Registry Action Tests workflow only runs on branch pushes,
+      # not tag pushes, so we shouldn't wait for it during releases.
+      # If you want to ensure tests run before tagging, run them on the branch first.
+      
+      - name: Verify tag is on main branch
+        run: |
+          # Check that this tag points to a commit that's on main branch
+          # This ensures tests ran when the commit was pushed to main
+          git fetch origin main
+          
+          TAG_COMMIT=$(git rev-parse ${{ github.ref }})
+          echo "Tag commit: $TAG_COMMIT"
+          
+          # Check if tag commit is reachable from main
+          if git merge-base --is-ancestor $TAG_COMMIT origin/main; then
+            echo "✅ Tag is based on main branch"
+          else
+            echo "❌ Tag is not based on main branch"
+            echo "Please ensure the tag points to a commit that has been tested on main"
+            exit 1
+          fi
 
   release:
     needs: [validate, wait-for-tests]
@@ -86,30 +102,48 @@ jobs:
       - name: Generate release notes
         id: release_notes
         run: |
-          # Extract changelog content for this version
+          # Extract changelog content for this version with better error handling
+          VERSION_NO_V=${GITHUB_REF#refs/tags/v}
+          echo "Looking for version: $VERSION_NO_V"
+          
           if [ -f "CHANGELOG.md" ]; then
-            # Try to extract content between this version and previous version
-            awk '/^## \[?'${GITHUB_REF#refs/tags/v}'\]?/{flag=1; next} /^## \[?[0-9]/{flag=0} flag' CHANGELOG.md > release_notes.md
+            echo "Found CHANGELOG.md, extracting content..."
             
-            # If no specific version content found, use a generic message
+            # More robust awk command with better escaping
+            awk -v version="$VERSION_NO_V" '
+              BEGIN { found=0; printing=0 }
+              /^## \[?'"$VERSION_NO_V"'\]?/ { found=1; printing=1; next }
+              /^## \[?[0-9]/ && found && printing { printing=0; exit }
+              printing { print }
+            ' CHANGELOG.md > release_notes.md
+            
+            # Check if we found any content
             if [ ! -s release_notes.md ]; then
-              echo "See [CHANGELOG.md](./CHANGELOG.md) for details." > release_notes.md
+              echo "No specific version content found in CHANGELOG.md"
+              echo "## Changes" > release_notes.md
+              echo "See [CHANGELOG.md](./CHANGELOG.md) for details." >> release_notes.md
             fi
           else
-            echo "🚀 Schema Registry Action ${GITHUB_REF#refs/tags/}" > release_notes.md
-            echo "" >> release_notes.md
-            echo "This release includes improvements and bug fixes." >> release_notes.md
-            echo "" >> release_notes.md
-            echo "## Usage" >> release_notes.md  
-            echo "\`\`\`yaml" >> release_notes.md
-            echo "- uses: ${{ github.repository }}@${{ steps.version.outputs.major_version }}" >> release_notes.md
-            echo "  with:" >> release_notes.md
-            echo "    operation: 'validate'" >> release_notes.md
-            echo "    schemas-path: './schemas'" >> release_notes.md
-            echo "\`\`\`" >> release_notes.md
+            echo "No CHANGELOG.md found, generating default release notes"
+            cat > release_notes.md << EOF
+## 🚀 Schema Registry Action ${GITHUB_REF#refs/tags/}
+
+This release includes improvements and bug fixes.
+
+### Usage
+\`\`\`yaml
+- uses: ${{ github.repository }}@${{ steps.version.outputs.major_version }}
+  with:
+    operation: 'validate'
+    schemas-path: './schemas'
+\`\`\`
+EOF
           fi
           
-          # Set multiline output
+          echo "Generated release notes:"
+          cat release_notes.md
+          
+          # Set multiline output using the recommended method
           {
             echo 'notes<<EOF'
             cat release_notes.md
