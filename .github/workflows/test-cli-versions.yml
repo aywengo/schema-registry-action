@@ -37,11 +37,34 @@ jobs:
             MATRIX_JSON=$(echo "$VERSIONS" | jq -R -s -c 'split(",") | map(gsub("\\s+"; "")) | map(select(length > 0))')
           else
             # Default test matrix: test last 3 releases + latest
-            # Get the last 3 releases
-            RELEASES=$(curl -s https://api.github.com/repos/aywengo/ksr-cli/releases?per_page=3 | jq -r '.[].tag_name')
+            echo "Fetching releases from GitHub API..."
             
-            # Create JSON array with releases + "latest"
-            MATRIX_JSON=$(echo "$RELEASES" | jq -R -s -c 'split("\n") | map(select(length > 0)) + ["latest"]')
+            # Get the releases with better error handling
+            RELEASES_JSON=$(curl -s -f https://api.github.com/repos/aywengo/ksr-cli/releases?per_page=3)
+            
+            if [ $? -ne 0 ] || [ -z "$RELEASES_JSON" ]; then
+              echo "Failed to fetch releases from GitHub API, using fallback versions"
+              # Fallback to known versions if API fails
+              MATRIX_JSON='["v0.2.1", "v0.2.2", "v0.2.3", "latest"]'
+            else
+              # Check if the response is valid JSON
+              if echo "$RELEASES_JSON" | jq empty 2>/dev/null; then
+                # Extract tag names from the JSON response
+                RELEASES=$(echo "$RELEASES_JSON" | jq -r '.[].tag_name' 2>/dev/null)
+                
+                if [ -z "$RELEASES" ]; then
+                  echo "No releases found, using fallback versions"
+                  MATRIX_JSON='["v0.2.1", "v0.2.2", "v0.2.3", "latest"]'
+                else
+                  # Create JSON array with releases + "latest"
+                  MATRIX_JSON=$(echo "$RELEASES" | jq -R -s -c 'split("\n") | map(select(length > 0)) + ["latest"]')
+                fi
+              else
+                echo "Invalid JSON response from GitHub API, using fallback versions"
+                echo "Response: $RELEASES_JSON"
+                MATRIX_JSON='["v0.2.1", "v0.2.2", "v0.2.3", "latest"]'
+              fi
+            fi
           fi
           
           echo "Testing versions: $MATRIX_JSON"
