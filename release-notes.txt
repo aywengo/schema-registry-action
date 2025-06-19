@@ -1,0 +1,25 @@
+## Changes
+
+See [CHANGELOG.md](CHANGELOG.md) for details.
+
+## Installation
+
+### Homebrew (macOS)
+```bash
+brew install aywengo/tap/ksr-cli
+# or
+brew install aywengo/tap/ksr
+```
+
+After installation, both `ksr-cli` and `ksr` commands will be available.
+
+### APT (Ubuntu/Debian)
+```bash
+wget https://github.com/aywengo/ksr-cli/releases/download/v0.2.3/ksr-cli_0.2.3_amd64.deb
+sudo dpkg -i ksr-cli_0.2.3_amd64.deb
+```
+
+After installation, both `ksr-cli` and `ksr` commands will be available.
+
+### Manual Installation
+Download the appropriate binary for your platform from the assets below.
