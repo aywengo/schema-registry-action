@@ -109,13 +109,9 @@ jobs:
           if [ -f "CHANGELOG.md" ]; then
             echo "Found CHANGELOG.md, extracting content..."
             
-            # More robust awk command with better escaping
-            awk -v version="$VERSION_NO_V" '
-              BEGIN { found=0; printing=0 }
-              /^## \[?'"$VERSION_NO_V"'\]?/ { found=1; printing=1; next }
-              /^## \[?[0-9]/ && found && printing { printing=0; exit }
-              printing { print }
-            ' CHANGELOG.md > release_notes.md
+            # Use a simpler approach that's more reliable
+            # Try to extract content between this version and previous version
+            awk '/^## \[?'${VERSION_NO_V}'\]?/{flag=1; next} /^## \[?[0-9]/{flag=0} flag' CHANGELOG.md > release_notes.md
             
             # Check if we found any content
             if [ ! -s release_notes.md ]; then
