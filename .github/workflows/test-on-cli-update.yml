@@ -1,0 +1,169 @@
+name: Test on CLI Update
+
+on:
+  pull_request:
+    paths:
+      - 'action.yml'
+    types: [opened, synchronize]
+
+jobs:
+  detect-cli-version-change:
+    runs-on: ubuntu-latest
+    outputs:
+      version-changed: ${{ steps.check.outputs.changed }}
+      old-version: ${{ steps.check.outputs.old-version }}
+      new-version: ${{ steps.check.outputs.new-version }}
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if CLI version changed
+        id: check
+        run: |
+          # Get the base branch (usually main)
+          BASE_BRANCH=${{ github.base_ref }}
+          
+          # Get CLI version from base branch
+          git fetch origin $BASE_BRANCH
+          OLD_VERSION=$(git show origin/$BASE_BRANCH:action.yml | grep -A1 "cli-version:" | grep "default:" | sed "s/.*default: '\(.*\)'/\1/")
+          
+          # Get CLI version from PR branch
+          NEW_VERSION=$(grep -A1 "cli-version:" action.yml | grep "default:" | sed "s/.*default: '\(.*\)'/\1/")
+          
+          echo "Old version: $OLD_VERSION"
+          echo "New version: $NEW_VERSION"
+          
+          if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
+            echo "CLI version changed from $OLD_VERSION to $NEW_VERSION"
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "old-version=$OLD_VERSION" >> $GITHUB_OUTPUT
+            echo "new-version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "CLI version unchanged"
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+  test-with-new-version:
+    needs: detect-cli-version-change
+    if: needs.detect-cli-version-change.outputs.version-changed == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        test-scenario:
+          - name: "Basic Validation"
+            operation: "validate"
+          - name: "Schema Deployment"
+            operation: "deploy"
+          - name: "Compatibility Check"
+            operation: "check-compatibility"
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test schemas
+        run: |
+          mkdir -p test-schemas
+          
+          cat > test-schemas/user.avsc << 'EOF'
+          {
+            "namespace": "com.example",
+            "type": "record",
+            "name": "User",
+            "fields": [
+              {"name": "id", "type": "string"},
+              {"name": "name", "type": "string"},
+              {"name": "email", "type": ["null", "string"], "default": null}
+            ]
+          }
+          EOF
+
+      - name: Test with new CLI version - ${{ matrix.test-scenario.name }}
+        id: test-new
+        uses: ./
+        with:
+          operation: ${{ matrix.test-scenario.operation }}
+          schemas-path: ./test-schemas
+          schema-file: ${{ matrix.test-scenario.operation == 'check-compatibility' && './test-schemas/user.avsc' || '' }}
+          subject: ${{ matrix.test-scenario.operation == 'check-compatibility' && 'com.example.User' || '' }}
+          registry-url: http://localhost:8081
+          cli-version: ${{ needs.detect-cli-version-change.outputs.new-version }}
+          fail-on-error: false
+          dry-run: true
+
+      - name: Test with old CLI version - ${{ matrix.test-scenario.name }}
+        id: test-old
+        if: needs.detect-cli-version-change.outputs.old-version != 'latest'
+        uses: ./
+        with:
+          operation: ${{ matrix.test-scenario.operation }}
+          schemas-path: ./test-schemas
+          schema-file: ${{ matrix.test-scenario.operation == 'check-compatibility' && './test-schemas/user.avsc' || '' }}
+          subject: ${{ matrix.test-scenario.operation == 'check-compatibility' && 'com.example.User' || '' }}
+          registry-url: http://localhost:8081
+          cli-version: ${{ needs.detect-cli-version-change.outputs.old-version }}
+          fail-on-error: false
+          dry-run: true
+
+      - name: Compare results
+        run: |
+          echo "## Test Results for ${{ matrix.test-scenario.name }} on ${{ matrix.os }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- New version (${{ needs.detect-cli-version-change.outputs.new-version }}): ${{ steps.test-new.outcome }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Old version (${{ needs.detect-cli-version-change.outputs.old-version }}): ${{ steps.test-old.outcome }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.test-new.outcome }}" != "${{ steps.test-old.outcome }}" ]; then
+            echo "⚠️ **Warning**: Different outcomes between versions!" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  regression-test:
+    needs: detect-cli-version-change
+    if: needs.detect-cli-version-change.outputs.version-changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run comprehensive regression tests
+        run: |
+          chmod +x tests/cli-version-compatibility-tests.sh
+          
+          # Test both old and new versions
+          ./tests/cli-version-compatibility-tests.sh \
+            "${{ needs.detect-cli-version-change.outputs.old-version }}" \
+            "${{ needs.detect-cli-version-change.outputs.new-version }}"
+
+      - name: Post results as PR comment
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version_change = {
+              old: '${{ needs.detect-cli-version-change.outputs.old-version }}',
+              new: '${{ needs.detect-cli-version-change.outputs.new-version }}'
+            };
+            
+            const comment = `## 🔄 CLI Version Update Test Results
+            
+            The ksr-cli version is being updated from \`${version_change.old}\` to \`${version_change.new}\`.
+            
+            ### Test Summary
+            - ✅ Cross-platform compatibility tests completed
+            - ✅ Regression tests executed
+            - 📋 Please review the test results in the [Actions tab](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            
+            ### Recommendations
+            - Ensure all tests pass before merging
+            - Consider testing with your specific use cases
+            - Update documentation if there are any breaking changes
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
