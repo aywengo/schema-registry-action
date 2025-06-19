@@ -172,9 +172,27 @@ runs:
         echo "Setting up ksr-cli (Kafka Schema Registry CLI)..."
         
         # Determine OS and architecture
-        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+        OS_RAW=$(uname -s)
         ARCH=$(uname -m)
         
+        # Map OS to the correct naming convention used by ksr-cli releases
+        case $OS_RAW in
+          Linux)
+            OS="linux"
+            ;;
+          Darwin)
+            OS="darwin"
+            ;;
+          CYGWIN*|MINGW*|MSYS*)
+            OS="windows"
+            ;;
+          *)
+            echo "Unsupported operating system: $OS_RAW"
+            exit 1
+            ;;
+        esac
+        
+        # Map architecture to the correct naming convention
         case $ARCH in
           x86_64)
             ARCH="amd64"
@@ -191,18 +209,49 @@ runs:
         # Set CLI version
         CLI_VERSION="${{ inputs.cli-version }}"
         if [ "$CLI_VERSION" == "latest" ]; then
-          CLI_VERSION=$(curl -s https://api.github.com/repos/aywengo/ksr-cli/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
+          CLI_VERSION=$(curl -s https://api.github.com/repos/aywengo/ksr-cli/releases/latest | jq -r '.tag_name')
+          if [ -z "$CLI_VERSION" ] || [ "$CLI_VERSION" == "null" ]; then
+            echo "Failed to fetch latest version, falling back to default"
+            CLI_VERSION="v0.2.3"
+          fi
         fi
         
-        # Download ksr-cli binary
-        CLI_URL="https://github.com/aywengo/ksr-cli/releases/download/${CLI_VERSION}/ksr-cli-${OS}-${ARCH}.tar.gz"
+        # Construct filename based on OS - Windows includes .exe in the archive name
+        if [ "$OS" == "windows" ]; then
+          FILENAME="ksr-cli-${OS}-${ARCH}.exe.tar.gz"
+          BINARY_NAME="ksr-cli.exe"
+        else
+          FILENAME="ksr-cli-${OS}-${ARCH}.tar.gz"
+          BINARY_NAME="ksr-cli"
+        fi
+        
+        # Construct download URL
+        CLI_URL="https://github.com/aywengo/ksr-cli/releases/download/${CLI_VERSION}/${FILENAME}"
         echo "Downloading ksr-cli from: $CLI_URL"
         
-        wget -q "$CLI_URL" -O ksr-cli.tar.gz
-        tar -xzf ksr-cli.tar.gz
-        chmod +x ksr-cli
-        sudo mv ksr-cli /usr/local/bin/
-        rm ksr-cli.tar.gz
+        # Download with better error handling
+        if ! wget -q "$CLI_URL" -O "ksr-cli.tar.gz"; then
+          echo "Failed to download from: $CLI_URL"
+          echo "Attempting to list available assets for version $CLI_VERSION..."
+          curl -s "https://api.github.com/repos/aywengo/ksr-cli/releases/tags/${CLI_VERSION}" | jq -r '.assets[].name' || echo "Failed to list assets"
+          exit 1
+        fi
+        
+        # Extract the tar.gz file (all platforms use tar.gz)
+        tar -xzf "ksr-cli.tar.gz"
+        
+        chmod +x "$BINARY_NAME"
+        
+        # Move to appropriate location based on OS
+        if [ "$OS" == "windows" ]; then
+          # On Windows in GitHub Actions, use a location that's in PATH
+          mkdir -p /usr/local/bin
+          mv "$BINARY_NAME" /usr/local/bin/ksr-cli
+        else
+          sudo mv "$BINARY_NAME" /usr/local/bin/
+        fi
+        
+        rm "ksr-cli.tar.gz"
         
         # Verify installation
         ksr-cli --version
