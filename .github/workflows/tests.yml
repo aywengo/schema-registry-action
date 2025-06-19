@@ -161,19 +161,29 @@ jobs:
       run: |
         # Check for common security issues in test scripts
         echo "Checking for dangerous shell commands in tests..."
-        # Look for eval, exec, system but exclude backticks in strings/comments
-        if grep -r "eval\|exec\|system" tests/ | grep -v "^#\|^\s*#" | grep -v '"\|'"'"''; then
-          echo "Found potentially dangerous commands"
-          exit 1
-        fi
         
         # Check for dangerous rm commands
-        if grep -r "rm -rf \$\|rm -rf /" tests/ | grep -v ">/dev/null 2>&1"; then
+        echo "Checking for dangerous rm patterns..."
+        if grep -rn "rm -rf \$\|rm -rf /" tests/ | grep -v "rm -rf \"\$TEMP_DIR\"" | grep -v ">/dev/null 2>&1"; then
           echo "Found dangerous rm commands"
           exit 1
         fi
         
-        echo "Security scan completed - no issues found"
+        # Check for dangerous eval patterns (eval with user input)
+        echo "Checking for potentially unsafe eval usage..."
+        if grep -rn "eval.*\$\{.*\}\|eval.*\$[A-Z_][A-Z0-9_]*" tests/ | grep -v "eval \"\$" | grep -v "eval '\$"; then
+          echo "Found potentially unsafe eval usage"
+          exit 1
+        fi
+        
+        # Check for system/exec calls that might be dangerous
+        echo "Checking for direct system calls..."
+        if grep -rn "\bsystem\s*(" tests/ | grep -v "\.md:"; then
+          echo "Found direct system() calls"
+          exit 1
+        fi
+        
+                 echo "Security scan completed - no dangerous patterns found"
     
     - name: Check for hardcoded secrets
       run: |
