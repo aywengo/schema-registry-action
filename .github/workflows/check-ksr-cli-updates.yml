@@ -1,0 +1,167 @@
+name: Check for ksr-cli updates
+
+on:
+  schedule:
+    # Run daily at 8:00 AM UTC
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Dry run (no PR creation)'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-ksr-cli-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get current ksr-cli version
+        id: current-version
+        run: |
+          # Extract current version from action.yml
+          CURRENT_VERSION=$(grep -A1 "cli-version:" action.yml | grep "default:" | sed "s/.*default: '\(.*\)'/\1/")
+          echo "Current ksr-cli version: $CURRENT_VERSION"
+          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Get latest ksr-cli version
+        id: latest-version
+        run: |
+          # Fetch latest release from ksr-cli repository
+          LATEST_VERSION=$(curl -s https://api.github.com/repos/aywengo/ksr-cli/releases/latest | jq -r '.tag_name')
+          echo "Latest ksr-cli version: $LATEST_VERSION"
+          echo "version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+          
+          # Get release notes
+          RELEASE_NOTES=$(curl -s https://api.github.com/repos/aywengo/ksr-cli/releases/latest | jq -r '.body')
+          echo "Release notes:"
+          echo "$RELEASE_NOTES"
+          
+          # Save release notes to file for PR body
+          echo "$RELEASE_NOTES" > release-notes.txt
+
+      - name: Compare versions
+        id: compare
+        run: |
+          CURRENT="${{ steps.current-version.outputs.version }}"
+          LATEST="${{ steps.latest-version.outputs.version }}"
+          
+          if [ "$CURRENT" = "$LATEST" ]; then
+            echo "ksr-cli is up to date ($CURRENT)"
+            echo "needs-update=false" >> $GITHUB_OUTPUT
+          else
+            echo "ksr-cli can be updated from $CURRENT to $LATEST"
+            echo "needs-update=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check for existing PR
+        if: steps.compare.outputs.needs-update == 'true'
+        id: check-pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Check if there's already an open PR for this version update
+          LATEST="${{ steps.latest-version.outputs.version }}"
+          PR_EXISTS=$(gh pr list --state open --label "ksr-cli-update" --json title | jq -r ".[] | select(.title | contains(\"$LATEST\")) | .title" | wc -l)
+          
+          if [ "$PR_EXISTS" -gt "0" ]; then
+            echo "PR already exists for version $LATEST"
+            echo "pr-exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "No existing PR found for version $LATEST"
+            echo "pr-exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update ksr-cli version in action.yml
+        if: steps.compare.outputs.needs-update == 'true' && steps.check-pr.outputs.pr-exists == 'false' && github.event.inputs.dry-run != 'true'
+        run: |
+          LATEST="${{ steps.latest-version.outputs.version }}"
+          
+          # Update the default cli-version in action.yml
+          sed -i "s/default: '[^']*' # cli-version/default: '$LATEST' # cli-version/g" action.yml
+          sed -i "/cli-version:/,/default:/ s/default: '[^']*'/default: '$LATEST'/" action.yml
+          
+          # Verify the change
+          echo "Updated action.yml:"
+          grep -A2 "cli-version:" action.yml
+
+      - name: Create Pull Request
+        if: steps.compare.outputs.needs-update == 'true' && steps.check-pr.outputs.pr-exists == 'false' && github.event.inputs.dry-run != 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ github.token }}
+          commit-message: "chore: update ksr-cli to ${{ steps.latest-version.outputs.version }}"
+          branch: update-ksr-cli-${{ steps.latest-version.outputs.version }}
+          delete-branch: true
+          title: "chore: update ksr-cli to ${{ steps.latest-version.outputs.version }}"
+          body: |
+            ## Description
+            This PR updates the default ksr-cli version from `${{ steps.current-version.outputs.version }}` to `${{ steps.latest-version.outputs.version }}`.
+
+            ## Release Notes for ${{ steps.latest-version.outputs.version }}
+            ${{ steps.read-notes.outputs.content }}
+
+            ## Changes
+            - Updated the default `cli-version` in `action.yml`
+
+            ## Testing
+            Please ensure that:
+            - [ ] The action continues to work with the new ksr-cli version
+            - [ ] All example workflows still function correctly
+            - [ ] No breaking changes affect existing users
+
+            ## Notes
+            - This PR was automatically created by the ksr-cli version check workflow
+            - Users can still specify their preferred version using the `cli-version` input
+            - The `latest` option will always fetch the most recent version regardless of this default
+
+            ---
+            *This is an automated pull request. Please review the changes and test before merging.*
+          labels: |
+            dependencies
+            ksr-cli-update
+            automated
+          reviewers: aywengo
+
+      - name: Read release notes for PR body
+        if: steps.compare.outputs.needs-update == 'true' && steps.check-pr.outputs.pr-exists == 'false' && github.event.inputs.dry-run != 'true'
+        id: read-notes
+        run: |
+          if [ -f release-notes.txt ]; then
+            CONTENT=$(cat release-notes.txt)
+            echo "content<<EOF" >> $GITHUB_OUTPUT
+            echo "$CONTENT" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "content=No release notes available." >> $GITHUB_OUTPUT
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## ksr-cli Version Check Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Current version:** ${{ steps.current-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Latest version:** ${{ steps.latest-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Update needed:** ${{ steps.compare.outputs.needs-update }}" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.compare.outputs.needs-update }}" = "true" ]; then
+            echo "- **Existing PR:** ${{ steps.check-pr.outputs.pr-exists }}" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ github.event.inputs.dry-run }}" = "true" ]; then
+              echo "- **Action:** Dry run - no PR created" >> $GITHUB_STEP_SUMMARY
+            elif [ "${{ steps.check-pr.outputs.pr-exists }}" = "true" ]; then
+              echo "- **Action:** PR already exists, skipping creation" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "- **Action:** PR created to update ksr-cli" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "- **Action:** No action needed - ksr-cli is up to date" >> $GITHUB_STEP_SUMMARY
+          fi
