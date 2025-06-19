@@ -29,6 +29,8 @@ jobs:
 
       - name: Determine versions to test
         id: set-matrix
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ "${{ github.event.inputs.test-versions }}" != "" ] && [ "${{ github.event.inputs.test-versions }}" != "default" ]; then
             # Use manually specified versions
@@ -39,33 +41,34 @@ jobs:
             # Default test matrix: test last 3 releases + latest
             echo "Fetching releases from GitHub API..."
             
-            # Get the releases with better error handling and use authenticated request if possible
-            if [ -n "${{ github.token }}" ]; then
-              RELEASES_JSON=$(curl -s -f -H "Authorization: token ${{ github.token }}" https://api.github.com/repos/aywengo/ksr-cli/releases?per_page=3)
-            else
-              RELEASES_JSON=$(curl -s -f https://api.github.com/repos/aywengo/ksr-cli/releases?per_page=3)
-            fi
+            # Get the releases with better error handling and use authenticated request
+            RELEASES_JSON=$(curl -s -f -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/aywengo/ksr-cli/releases?per_page=3)
             
             if [ $? -ne 0 ] || [ -z "$RELEASES_JSON" ]; then
               echo "Failed to fetch releases from GitHub API, using fallback versions"
               # Fallback to known versions if API fails
               MATRIX_JSON='["v0.2.1", "v0.2.2", "v0.2.3", "latest"]'
             else
-              # Check if the response is valid JSON
-              if echo "$RELEASES_JSON" | jq empty 2>/dev/null; then
-                # Extract tag names from the JSON response
-                RELEASES=$(echo "$RELEASES_JSON" | jq -r '.[].tag_name' 2>/dev/null)
-                
-                if [ -z "$RELEASES" ]; then
-                  echo "No releases found, using fallback versions"
+              # Check if the response is valid JSON and not an error
+              if echo "$RELEASES_JSON" | jq -e . >/dev/null 2>&1; then
+                # Check if it's an API error response
+                if echo "$RELEASES_JSON" | jq -e '.message' >/dev/null 2>&1; then
+                  echo "GitHub API error: $(echo "$RELEASES_JSON" | jq -r '.message')"
                   MATRIX_JSON='["v0.2.1", "v0.2.2", "v0.2.3", "latest"]'
                 else
-                  # Create JSON array with releases + "latest"
-                  MATRIX_JSON=$(echo "$RELEASES" | jq -R -s -c 'split("\n") | map(select(length > 0)) + ["latest"]')
+                  # Extract tag names from the JSON response
+                  RELEASES=$(echo "$RELEASES_JSON" | jq -r '.[].tag_name' 2>/dev/null | head -3)
+                  
+                  if [ -z "$RELEASES" ]; then
+                    echo "No releases found, using fallback versions"
+                    MATRIX_JSON='["v0.2.1", "v0.2.2", "v0.2.3", "latest"]'
+                  else
+                    # Create JSON array with releases + "latest"
+                    MATRIX_JSON=$(echo "$RELEASES" | jq -R -s -c 'split("\n") | map(select(length > 0)) | . + ["latest"]')
+                  fi
                 fi
               else
                 echo "Invalid JSON response from GitHub API, using fallback versions"
-                echo "Response: $RELEASES_JSON"
                 MATRIX_JSON='["v0.2.1", "v0.2.2", "v0.2.3", "latest"]'
               fi
             fi
@@ -128,6 +131,10 @@ jobs:
             "name": "Invalid"
           }
           EOF
+          
+          # List files to verify creation
+          echo "Created test schemas:"
+          ls -la test-schemas/
 
       - name: Test schema validation
         id: test-validate
@@ -156,6 +163,10 @@ jobs:
           mkdir -p valid-schemas
           cp test-schemas/user.avsc valid-schemas/
           cp test-schemas/user-v2.avsc valid-schemas/
+          
+          # List files to verify copy
+          echo "Valid schemas:"
+          ls -la valid-schemas/
 
       - name: Test schema validation (valid only)
         id: test-validate-valid
@@ -203,11 +214,13 @@ jobs:
           # Verify the correct CLI version was installed
           echo "Testing with ksr-cli version: ${{ matrix.cli-version }}"
           
-          # Check if ksr-cli is available
-          if command -v ksr-cli &> /dev/null 2>&1; then
-            ksr-cli --version || echo "Version command not supported"
+          # Check if ksr-cli is available - use different approach for Windows
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            where ksr-cli 2>nul || echo "ksr-cli not found in PATH"
+            ksr-cli --version 2>nul || echo "Version command not supported or ksr-cli not found"
           else
-            echo "ksr-cli not found in PATH"
+            which ksr-cli || echo "ksr-cli not found in PATH"
+            ksr-cli --version || echo "Version command not supported"
           fi
 
       - name: Summary
@@ -225,65 +238,76 @@ jobs:
   integration-test:
     needs: test-cli-version
     runs-on: ubuntu-latest
-    services:
-      zookeeper:
-        image: confluentinc/cp-zookeeper:7.5.0
-        ports:
-          - 2181:2181
-        env:
-          ZOOKEEPER_CLIENT_PORT: 2181
-          ZOOKEEPER_TICK_TIME: 2000
-
-      kafka:
-        image: confluentinc/cp-kafka:7.5.0
-        ports:
-          - 9092:9092
-          - 29092:29092
-        env:
-          KAFKA_BROKER_ID: 1
-          KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
-          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-          KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-        options: >-
-          --health-cmd "kafka-broker-api-versions --bootstrap-server localhost:9092"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-
-      schema-registry:
-        image: confluentinc/cp-schema-registry:7.5.0
-        ports:
-          - 8081:8081
-        env:
-          SCHEMA_REGISTRY_HOST_NAME: schema-registry
-          SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:29092
-          SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
-        options: >-
-          --health-cmd "curl -f http://localhost:8081/subjects || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-
+    
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Wait for Schema Registry
+      - name: Start services using docker-compose
         run: |
-          echo "Waiting for Schema Registry to be ready..."
-          for i in {1..60}; do
-            if curl -f http://localhost:8081/subjects 2>/dev/null; then
-              echo "Schema Registry is ready!"
-              break
-            fi
-            echo "Waiting... ($i/60)"
-            sleep 2
-          done
+          # Create a docker-compose.yml for better control
+          cat > docker-compose.yml << 'EOF'
+          version: '3.8'
+          services:
+            zookeeper:
+              image: confluentinc/cp-zookeeper:7.5.0
+              environment:
+                ZOOKEEPER_CLIENT_PORT: 2181
+                ZOOKEEPER_TICK_TIME: 2000
+              healthcheck:
+                test: ["CMD", "echo", "ruok", "|", "nc", "localhost", "2181"]
+                interval: 10s
+                timeout: 5s
+                retries: 5
           
-          # Verify final status
-          curl -f http://localhost:8081/subjects || (echo "Schema Registry failed to start" && exit 1)
+            kafka:
+              image: confluentinc/cp-kafka:7.5.0
+              depends_on:
+                zookeeper:
+                  condition: service_healthy
+              ports:
+                - "9092:9092"
+              environment:
+                KAFKA_BROKER_ID: 1
+                KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+                KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+                KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+                KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+                KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+              healthcheck:
+                test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+                interval: 10s
+                timeout: 10s
+                retries: 10
+          
+            schema-registry:
+              image: confluentinc/cp-schema-registry:7.5.0
+              depends_on:
+                kafka:
+                  condition: service_healthy
+              ports:
+                - "8081:8081"
+              environment:
+                SCHEMA_REGISTRY_HOST_NAME: schema-registry
+                SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:29092
+                SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+              healthcheck:
+                test: ["CMD", "curl", "-f", "http://localhost:8081/subjects"]
+                interval: 10s
+                timeout: 5s
+                retries: 10
+          EOF
+          
+          # Start services
+          docker-compose up -d
+          
+          # Wait for all services to be healthy
+          echo "Waiting for services to be healthy..."
+          timeout 180 sh -c 'until docker-compose ps | grep -E "(healthy|running)" | grep -q schema-registry; do echo "Waiting for services..."; sleep 5; done'
+          
+          # Additional wait and verification
+          sleep 10
+          curl -f http://localhost:8081/subjects || (docker-compose logs && exit 1)
 
       - name: Create test schemas
         run: |
@@ -338,6 +362,11 @@ jobs:
           
           echo "Exported schemas:"
           cat ./exported.json | jq '.' || cat ./exported.json
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker-compose down -v || true
 
       - name: Integration test summary
         if: always()
