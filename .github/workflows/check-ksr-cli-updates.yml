@@ -129,7 +129,7 @@ jobs:
 
       - name: Create Pull Request
         if: steps.compare.outputs.needs-update == 'true' && steps.check-pr.outputs.pr-exists == 'false' && github.event.inputs.dry-run != 'true'
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.WORKFLOW_TOKEN }}
           commit-message: "chore: update ksr-cli to ${{ steps.latest-version.outputs.version }}"
