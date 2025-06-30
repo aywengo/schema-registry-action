@@ -43,7 +43,7 @@ jobs:
       
       # Wait for basic Test workflow (from test.yml)
       - name: Wait for basic Test workflow
-        uses: lewagon/wait-on-check-action@v1.3.4
+        uses: lewagon/wait-on-check-action@v1.4.0
         with:
           ref: ${{ github.ref }}
           check-name: 'test'  # Fixed: should be 'test' (lowercase)
@@ -53,7 +53,7 @@ jobs:
           
       # Wait for Schema Registry Action Tests workflow matrix jobs
       - name: Wait for unit tests
-        uses: lewagon/wait-on-check-action@v1.3.4
+        uses: lewagon/wait-on-check-action@v1.4.0
         with:
           ref: ${{ github.ref }}
           check-name: 'test (unit)'
@@ -62,7 +62,7 @@ jobs:
           allowed-conclusions: success,skipped
           
       - name: Wait for integration tests
-        uses: lewagon/wait-on-check-action@v1.3.4
+        uses: lewagon/wait-on-check-action@v1.4.0
         with:
           ref: ${{ github.ref }}
           check-name: 'test (integration)'
@@ -71,7 +71,7 @@ jobs:
           allowed-conclusions: success,skipped
           
       - name: Wait for performance tests
-        uses: lewagon/wait-on-check-action@v1.3.4
+        uses: lewagon/wait-on-check-action@v1.4.0
         with:
           ref: ${{ github.ref }}
           check-name: 'test (performance)'
