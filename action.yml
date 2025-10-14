@@ -131,7 +131,7 @@ inputs:
   cli-version:
     description: 'ksr-cli version to use (e.g., v0.2.3, latest)'
     required: false
-    default: 'v0.2.3'
+    default: 'null'
 
 outputs:
   validation-result:
